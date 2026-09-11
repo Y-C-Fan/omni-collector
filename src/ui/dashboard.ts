@@ -191,7 +191,7 @@ export class FavDashboardView extends ItemView {
         const meta = card.createDiv({ cls: "fav-meta" });
         const badge = meta.createSpan({ cls: `fav-badge ${c.platform}`, text: PLATFORM_LABEL[c.platform] });
         void badge;
-        meta.appendText(`${c.publishedAt ?? "未知时间"}${c.author ? ` · ${c.author}` : ""}`);
+        meta.appendText(`${c.dateLabel}${c.author ? ` · ${c.author}` : ""}`);
         if (c.description) card.createDiv({ cls: "fav-desc", text: c.description });
       }
       if (rendered >= 500) break;
@@ -211,14 +211,15 @@ export class FavDashboardView extends ItemView {
     for (const f of files) {
       try {
         const md = await this.app.vault.read(f);
-        const card = cardFromNote(f.path, md);
+        const card = cardFromNote(f.path, md, f.stat.ctime);
         if (card) out.push(card);
         else skipped += 1;
       } catch {
         skipped += 1;
       }
     }
-    out.sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
+    // 最新在上：发布时间/文件名前缀日期 → 都没有则按入库时间（ctime）
+    out.sort((a, b) => b.sortKey.localeCompare(a.sortKey) || b.ctime - a.ctime || a.path.localeCompare(b.path));
     return { cards: out, scanned: files.length, skipped };
   }
 }

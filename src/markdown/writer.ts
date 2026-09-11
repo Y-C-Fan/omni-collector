@@ -83,9 +83,15 @@ export interface CardData {
   folder?: string;
   cover?: string;
   description?: string;
+  /** 排序键：published_at → 文件名 YYYY-MM-DD 前缀 → ""（再按 ctime 兜底） */
+  sortKey: string;
+  /** 卡片上显示的日期：published_at → 文件名前缀日期 → 未知时间 */
+  dateLabel: string;
+  /** 文件创建时间（入库顺序兜底，最新入库在上） */
+  ctime: number;
 }
 
-export function cardFromNote(path: string, md: string): CardData | null {
+export function cardFromNote(path: string, md: string, ctime = 0): CardData | null {
   const fm = parseFrontmatter(md);
   if (!fm.platform || !fm.url) return null;
   // 旧版笔记第一个 H1 是系统区标记行，跳过它取真正的标题
@@ -104,16 +110,23 @@ export function cardFromNote(path: string, md: string): CardData | null {
   let description: string | undefined;
   const introM = md.match(/^## 简介\s*\n([\s\S]*?)(?=^## |^# |<!--|\Z)/m);
   if (introM) description = introM[1].trim().slice(0, 200) || undefined;
+  const fileName = segs[segs.length - 1] ?? "";
+  const dateM = fileName.match(/^(\d{4}-\d{2}-\d{2})_/);
+  const publishedAt = fm.published_at || undefined;
+  const sortKey = publishedAt ?? dateM?.[1] ?? "";
   return {
     path,
     platform: fm.platform as Platform,
     title,
     url: fm.url,
     author: fm.author,
-    publishedAt: fm.published_at,
+    publishedAt,
     folder,
     cover,
     description,
+    sortKey,
+    dateLabel: publishedAt ?? dateM?.[1] ?? "未知时间",
+    ctime,
   };
 }
 

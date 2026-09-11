@@ -60,6 +60,9 @@ describe("writer", () => {
       title: "t",
       url: "u",
       folder,
+      sortKey: "",
+      dateLabel: "未知时间",
+      ctime: 0,
     });
     const groups = groupCards([mk("B"), mk(), mk("A"), mk("B")], "bilibili");
     expect(groups.map((g) => g.label)).toEqual(["B", "A", "未分类"]);

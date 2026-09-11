@@ -6,7 +6,7 @@ import { Notice, Plugin, WorkspaceLeaf, requestUrl } from "obsidian";
 import { DEFAULT_SETTINGS, type FavSettings } from "./settings.js";import { FavSettingTab } from "./settings-tab.js";
 import { FavDashboardView, VIEW_TYPE_FAV_DASHBOARD } from "./ui/dashboard.js";
 import { parseFrontmatter } from "./markdown/writer.js";
-import { syncPlatform, writeNewItems } from "./sync/runner.js";
+import { syncPlatform, writeNewItems, relocateItems } from "./sync/runner.js";
 import { enrichYoutubeDates } from "./sync/youtube.js";
 import { PLATFORMS } from "./sync/model.js";
 import type { CollectedItem, HttpGet, Platform, PlatformResult } from "./sync/model.js";
@@ -139,20 +139,28 @@ export default class FavCollectorPlugin extends Plugin {
   }
 
   /** 扫 Vault 组装去重集合（fav_id + url，兼容旧笔记）。 */
-  async scanExisting(): Promise<{ favIds: Set<string>; urls: Set<string> }> {
+  async scanExisting(): Promise<{ favIds: Set<string>; urls: Set<string>; favIdToPath: Map<string, string>; urlToPath: Map<string, string> }> {
     const favIds = new Set<string>();
     const urls = new Set<string>();
+    const favIdToPath = new Map<string, string>();
+    const urlToPath = new Map<string, string>();
     const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith("Fav Collector/"));
     for (const f of files) {
       try {
         const fm = parseFrontmatter(await this.app.vault.read(f));
-        if (fm.fav_id) favIds.add(fm.fav_id);
-        if (fm.url) urls.add(fm.url);
+        if (fm.fav_id) {
+          favIds.add(fm.fav_id);
+          if (!favIdToPath.has(fm.fav_id)) favIdToPath.set(fm.fav_id, f.path);
+        }
+        if (fm.url) {
+          urls.add(fm.url);
+          if (!urlToPath.has(fm.url)) urlToPath.set(fm.url, f.path);
+        }
       } catch {
         // 跳过坏文件
       }
     }
-    return { favIds, urls };
+    return { favIds, urls, favIdToPath, urlToPath };
   }
 
   async syncPlatform(platform: Platform): Promise<void> {
@@ -167,7 +175,8 @@ export default class FavCollectorPlugin extends Plugin {
       new Notice(`同步 ${platform} 中…（总览页看实时进度）`);
       this.setStatus(`Fav: 同步 ${platform}…`);
       const result = await syncPlatform(platform, this.runnerSettings(), this.runnerDeps());
-      const { favIds, urls } = await this.scanExisting();
+      const { favIds, urls, favIdToPath, urlToPath } = await this.scanExisting();
+      const moved = await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]);
       const report = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
       this.settings.lastSync[platform] = {
         at: new Date().toISOString(),
@@ -182,7 +191,7 @@ export default class FavCollectorPlugin extends Plugin {
       this.syncProgress.finishedAt = new Date().toISOString();
       this.setStatus(result.ok ? `Fav: ${platform} +${report.added}` : `Fav: ${platform} 失败`);
       this.emitProgress();
-      new Notice(result.ok ? `${platform} 同步完成，新增 ${report.added} 条` : `${platform} 失败：${result.error}`);
+      new Notice(result.ok ? `${platform} 同步完成，新增 ${report.added} 条${moved.moved > 0 ? `，归档 ${moved.moved} 条` : ""}` : `${platform} 失败：${result.error}`);
     } finally {
       this.syncing = false;
     }
@@ -194,6 +203,11 @@ export default class FavCollectorPlugin extends Plugin {
       exists: (p: string) => va.adapter.exists(p),
       mkdir: (p: string) => va.createFolder(p).then(() => undefined).catch(() => undefined),
       write: (p: string, c: string) => va.create(p, c).then(() => undefined),
+      rename: async (oldPath: string, newPath: string) => {
+        const f = va.getFileByPath(oldPath);
+        if (!f) throw new Error(`找不到文件：${oldPath}`);
+        await va.rename(f, newPath);
+      },
     };
   }
 
@@ -215,8 +229,9 @@ export default class FavCollectorPlugin extends Plugin {
       new Notice("开始同步全部平台…（总览页看实时进度）");
       const settings = this.runnerSettings();
       const deps = this.runnerDeps();
-      const { favIds, urls } = await this.scanExisting();
+      const { favIds, urls, favIdToPath, urlToPath } = await this.scanExisting();
       let totalAdded = 0;
+      let totalMoved = 0;
       let idx = 0;
       for (const p of PLATFORMS) {
         idx += 1;
@@ -232,6 +247,8 @@ export default class FavCollectorPlugin extends Plugin {
         let added = 0;
         if (result.ok) {
           try {
+            const mv = await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]);
+            totalMoved += mv.moved;
             const rep = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
             added = rep.added;
             totalAdded += added;
@@ -253,7 +270,7 @@ export default class FavCollectorPlugin extends Plugin {
       this.emitProgress();
       new Notice(
         failed.length === 0
-          ? `同步完成：${PLATFORMS.length}/${PLATFORMS.length} 平台，新增 ${totalAdded} 条`
+          ? `同步完成：${PLATFORMS.length}/${PLATFORMS.length} 平台，新增 ${totalAdded} 条${totalMoved > 0 ? `，归档 ${totalMoved} 条` : ""}`
           : `同步完成 ${okCount}/${PLATFORMS.length}，新增 ${totalAdded} 条；失败：${failed.join("、")}（看总览红卡重试）`,
       );
       await this.openDashboard();

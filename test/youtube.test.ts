@@ -11,6 +11,15 @@ describe("youtube", () => {
     expect(items[0].coverUrl).toBe("https://i.ytimg.com/vi/abc/hqdefault.jpg");
   });
 
+  it("parseFlatList assigns LL to folder", () => {
+    const wl = parseFlatList("abc\tHello\n", "WL");
+    expect(wl[0].watchLater).toBe(true);
+    expect(wl[0].folder).toBeUndefined();
+    const ll = parseFlatList("def\tWorld\n", "LL");
+    expect(ll[0].watchLater).toBe(false);
+    expect(ll[0].folder).toBe("喜欢");
+  });
+
   it("collectYoutube collects WL + LL via fake run", async () => {
     const run = async (_cmd: string, args: string[]) => {
       const list = args[args.length - 1].includes("list=WL") ? "WL" : "LL";

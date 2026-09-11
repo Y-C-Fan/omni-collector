@@ -211,7 +211,7 @@ function parseFrontmatter(md) {
   }
   return out;
 }
-function cardFromNote(path, md) {
+function cardFromNote(path, md, ctime = 0) {
   const fm = parseFrontmatter(md);
   if (!fm.platform || !fm.url) return null;
   const headings = [...md.matchAll(/^# (.+)$/gm)].map((m) => m[1]).filter((h) => h !== "Fav Collector System Zone");
@@ -227,16 +227,23 @@ function cardFromNote(path, md) {
   let description;
   const introM = md.match(/^## 简介\s*\n([\s\S]*?)(?=^## |^# |<!--|\Z)/m);
   if (introM) description = introM[1].trim().slice(0, 200) || void 0;
+  const fileName = segs[segs.length - 1] ?? "";
+  const dateM = fileName.match(/^(\d{4}-\d{2}-\d{2})_/);
+  const publishedAt = fm.published_at || void 0;
+  const sortKey = publishedAt ?? dateM?.[1] ?? "";
   return {
     path,
     platform: fm.platform,
     title,
     url: fm.url,
     author: fm.author,
-    publishedAt: fm.published_at,
+    publishedAt,
     folder,
     cover,
-    description
+    description,
+    sortKey,
+    dateLabel: publishedAt ?? dateM?.[1] ?? "\u672A\u77E5\u65F6\u95F4",
+    ctime
   };
 }
 function groupCards(cards, platform) {
@@ -428,7 +435,7 @@ var FavDashboardView = class extends import_obsidian2.ItemView {
         };
         const meta = card.createDiv({ cls: "fav-meta" });
         const badge = meta.createSpan({ cls: `fav-badge ${c.platform}`, text: PLATFORM_LABEL[c.platform] });
-        meta.appendText(`${c.publishedAt ?? "\u672A\u77E5\u65F6\u95F4"}${c.author ? ` \xB7 ${c.author}` : ""}`);
+        meta.appendText(`${c.dateLabel}${c.author ? ` \xB7 ${c.author}` : ""}`);
         if (c.description) card.createDiv({ cls: "fav-desc", text: c.description });
       }
       if (rendered >= 500) break;
@@ -446,14 +453,14 @@ var FavDashboardView = class extends import_obsidian2.ItemView {
     for (const f of files) {
       try {
         const md = await this.app.vault.read(f);
-        const card = cardFromNote(f.path, md);
+        const card = cardFromNote(f.path, md, f.stat.ctime);
         if (card) out.push(card);
         else skipped += 1;
       } catch {
         skipped += 1;
       }
     }
-    out.sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
+    out.sort((a, b) => b.sortKey.localeCompare(a.sortKey) || b.ctime - a.ctime || a.path.localeCompare(b.path));
     return { cards: out, scanned: files.length, skipped };
   }
 };
@@ -622,6 +629,7 @@ function parseFlatList(stdout, listId) {
     if (!m) continue;
     const it = makeItem("youtube", `${listId}_${m[1]}`, `https://www.youtube.com/watch?v=${m[1]}`, (m[2] || "(\u65E0\u6807\u9898)").slice(0, 150));
     it.watchLater = listId === "WL";
+    if (listId === "LL") it.folder = "\u559C\u6B22";
     it.coverUrl = `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg`;
     it.videoId = m[1];
     items.push(it);
@@ -1030,6 +1038,28 @@ async function writeNewItems(fs, existingFavIds, existingUrls, results, enrichYo
   }
   return { added: addedPaths.length, addedPaths, results };
 }
+async function relocateItems(fs, favIdToPath, urlToPath, results) {
+  const movedPaths = [];
+  for (const r of results) {
+    if (!r.ok) continue;
+    for (const it of r.items) {
+      const target = notePathFor(it);
+      const known = favIdToPath.get(it.favId) ?? urlToPath.get(it.url);
+      if (!known || known === target) continue;
+      if (await fs.exists(target)) continue;
+      try {
+        const dir = target.slice(0, target.lastIndexOf("/"));
+        await fs.mkdir(dir);
+        await fs.rename(known, target);
+        favIdToPath.set(it.favId, target);
+        if (it.url) urlToPath.set(it.url, target);
+        movedPaths.push(`${known} -> ${target}`);
+      } catch {
+      }
+    }
+  }
+  return { moved: movedPaths.length, movedPaths };
+}
 
 // src/main.ts
 var FavCollectorPlugin = class extends import_obsidian3.Plugin {
@@ -1134,16 +1164,24 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
   async scanExisting() {
     const favIds = /* @__PURE__ */ new Set();
     const urls = /* @__PURE__ */ new Set();
+    const favIdToPath = /* @__PURE__ */ new Map();
+    const urlToPath = /* @__PURE__ */ new Map();
     const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith("Fav Collector/"));
     for (const f of files) {
       try {
         const fm = parseFrontmatter(await this.app.vault.read(f));
-        if (fm.fav_id) favIds.add(fm.fav_id);
-        if (fm.url) urls.add(fm.url);
+        if (fm.fav_id) {
+          favIds.add(fm.fav_id);
+          if (!favIdToPath.has(fm.fav_id)) favIdToPath.set(fm.fav_id, f.path);
+        }
+        if (fm.url) {
+          urls.add(fm.url);
+          if (!urlToPath.has(fm.url)) urlToPath.set(fm.url, f.path);
+        }
       } catch {
       }
     }
-    return { favIds, urls };
+    return { favIds, urls, favIdToPath, urlToPath };
   }
   async syncPlatform(platform) {
     if (this.syncing) {
@@ -1157,7 +1195,8 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       new import_obsidian3.Notice(`\u540C\u6B65 ${platform} \u4E2D\u2026\uFF08\u603B\u89C8\u9875\u770B\u5B9E\u65F6\u8FDB\u5EA6\uFF09`);
       this.setStatus(`Fav: \u540C\u6B65 ${platform}\u2026`);
       const result = await syncPlatform(platform, this.runnerSettings(), this.runnerDeps());
-      const { favIds, urls } = await this.scanExisting();
+      const { favIds, urls, favIdToPath, urlToPath } = await this.scanExisting();
+      const moved = await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]);
       const report = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
       this.settings.lastSync[platform] = {
         at: (/* @__PURE__ */ new Date()).toISOString(),
@@ -1172,7 +1211,7 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       this.syncProgress.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
       this.setStatus(result.ok ? `Fav: ${platform} +${report.added}` : `Fav: ${platform} \u5931\u8D25`);
       this.emitProgress();
-      new import_obsidian3.Notice(result.ok ? `${platform} \u540C\u6B65\u5B8C\u6210\uFF0C\u65B0\u589E ${report.added} \u6761` : `${platform} \u5931\u8D25\uFF1A${result.error}`);
+      new import_obsidian3.Notice(result.ok ? `${platform} \u540C\u6B65\u5B8C\u6210\uFF0C\u65B0\u589E ${report.added} \u6761${moved.moved > 0 ? `\uFF0C\u5F52\u6863 ${moved.moved} \u6761` : ""}` : `${platform} \u5931\u8D25\uFF1A${result.error}`);
     } finally {
       this.syncing = false;
     }
@@ -1182,7 +1221,12 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
     return {
       exists: (p) => va.adapter.exists(p),
       mkdir: (p) => va.createFolder(p).then(() => void 0).catch(() => void 0),
-      write: (p, c) => va.create(p, c).then(() => void 0)
+      write: (p, c) => va.create(p, c).then(() => void 0),
+      rename: async (oldPath, newPath) => {
+        const f = va.getFileByPath(oldPath);
+        if (!f) throw new Error(`\u627E\u4E0D\u5230\u6587\u4EF6\uFF1A${oldPath}`);
+        await va.rename(f, newPath);
+      }
     };
   }
   ytEnrich() {
@@ -1201,8 +1245,9 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       new import_obsidian3.Notice("\u5F00\u59CB\u540C\u6B65\u5168\u90E8\u5E73\u53F0\u2026\uFF08\u603B\u89C8\u9875\u770B\u5B9E\u65F6\u8FDB\u5EA6\uFF09");
       const settings = this.runnerSettings();
       const deps = this.runnerDeps();
-      const { favIds, urls } = await this.scanExisting();
+      const { favIds, urls, favIdToPath, urlToPath } = await this.scanExisting();
       let totalAdded = 0;
+      let totalMoved = 0;
       let idx = 0;
       for (const p of PLATFORMS) {
         idx += 1;
@@ -1218,6 +1263,8 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
         let added = 0;
         if (result.ok) {
           try {
+            const mv = await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]);
+            totalMoved += mv.moved;
             const rep = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
             added = rep.added;
             totalAdded += added;
@@ -1238,7 +1285,7 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       this.setStatus(failed.length === 0 ? `Fav: \u5B8C\u6210 +${totalAdded}` : `Fav: ${failed.join("\u3001")}\u5931\u8D25`);
       this.emitProgress();
       new import_obsidian3.Notice(
-        failed.length === 0 ? `\u540C\u6B65\u5B8C\u6210\uFF1A${PLATFORMS.length}/${PLATFORMS.length} \u5E73\u53F0\uFF0C\u65B0\u589E ${totalAdded} \u6761` : `\u540C\u6B65\u5B8C\u6210 ${okCount}/${PLATFORMS.length}\uFF0C\u65B0\u589E ${totalAdded} \u6761\uFF1B\u5931\u8D25\uFF1A${failed.join("\u3001")}\uFF08\u770B\u603B\u89C8\u7EA2\u5361\u91CD\u8BD5\uFF09`
+        failed.length === 0 ? `\u540C\u6B65\u5B8C\u6210\uFF1A${PLATFORMS.length}/${PLATFORMS.length} \u5E73\u53F0\uFF0C\u65B0\u589E ${totalAdded} \u6761${totalMoved > 0 ? `\uFF0C\u5F52\u6863 ${totalMoved} \u6761` : ""}` : `\u540C\u6B65\u5B8C\u6210 ${okCount}/${PLATFORMS.length}\uFF0C\u65B0\u589E ${totalAdded} \u6761\uFF1B\u5931\u8D25\uFF1A${failed.join("\u3001")}\uFF08\u770B\u603B\u89C8\u7EA2\u5361\u91CD\u8BD5\uFF09`
       );
       await this.openDashboard();
     } finally {

@@ -30,6 +30,8 @@ export interface FsAdapter {
   exists(path: string): Promise<boolean>;
   mkdir(path: string): Promise<void>;
   write(path: string, content: string): Promise<void>;
+  /** 把旧路径笔记搬到新路径（仅改路径，不碰内容）；不支持则抛错由调用方吞掉 */
+  rename(oldPath: string, newPath: string): Promise<void>;
 }
 
 export async function syncPlatform(
@@ -111,6 +113,39 @@ export async function writeNewItems(
     }
   }
   return { added: addedPaths.length, addedPaths, results };
+}
+
+/**
+ * 搬家：已存在笔记若不在当前应有目录（收藏夹改名/新加 folder 规则，如 YouTube LL→喜欢），
+ * 只改路径不碰内容。按 favId 找，旧版 YT 笔记 fav_id 无 WL_/LL_ 前缀则按 url 找。
+ */
+export async function relocateItems(
+  fs: FsAdapter,
+  favIdToPath: Map<string, string>,
+  urlToPath: Map<string, string>,
+  results: PlatformResult[],
+): Promise<{ moved: number; movedPaths: string[] }> {
+  const movedPaths: string[] = [];
+  for (const r of results) {
+    if (!r.ok) continue;
+    for (const it of r.items) {
+      const target = notePathFor(it);
+      const known = favIdToPath.get(it.favId) ?? urlToPath.get(it.url);
+      if (!known || known === target) continue;
+      if (await fs.exists(target)) continue; // 目标被占则跳过，绝不覆盖
+      try {
+        const dir = target.slice(0, target.lastIndexOf("/"));
+        await fs.mkdir(dir);
+        await fs.rename(known, target);
+        favIdToPath.set(it.favId, target);
+        if (it.url) urlToPath.set(it.url, target);
+        movedPaths.push(`${known} -> ${target}`);
+      } catch {
+        // 搬不动不阻塞同步
+      }
+    }
+  }
+  return { moved: movedPaths.length, movedPaths };
 }
 
 export { PLATFORMS };
