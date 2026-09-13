@@ -6,7 +6,7 @@ import { Notice, Plugin, WorkspaceLeaf, requestUrl } from "obsidian";
 import { DEFAULT_SETTINGS, type FavSettings } from "./settings.js";import { FavSettingTab } from "./settings-tab.js";
 import { FavDashboardView, VIEW_TYPE_FAV_DASHBOARD } from "./ui/dashboard.js";
 import { parseFrontmatter } from "./markdown/writer.js";
-import { syncPlatform, writeNewItems, relocateItems, refreshYoutubeOrder } from "./sync/runner.js";
+import { syncPlatform, writeNewItems, relocateItems, refreshQueueOrder } from "./sync/runner.js";
 import { enrichYoutubeDates, enrichYoutubeDesc } from "./sync/youtube.js";
 import { PLATFORMS, PLATFORM_LABEL } from "./sync/model.js";
 import type { CollectedItem, HttpGet, Platform, PlatformResult } from "./sync/model.js";
@@ -207,9 +207,9 @@ export default class FavCollectorPlugin extends Plugin {
         ? await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result])
         : { moved: 0, movedPaths: [] as string[] };
       const report = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
-      if (result.ok && platform === "youtube") {
-        this.setStep("YouTube 队列位置刷新（稍后再看是栈，新加的顶上来）…");
-        await refreshYoutubeOrder(this.fsAdapter(), urlToPath, result.items);
+      if (result.ok) {
+        this.setStep(`${PLATFORM_LABEL[platform]}队列位置刷新（收藏夹是栈，新加的顶上来）…`);
+        await refreshQueueOrder(this.fsAdapter(), urlToPath, result.items);
       }
       this.settings.lastSync[platform] = {
         at: new Date().toISOString(),
@@ -311,10 +311,8 @@ export default class FavCollectorPlugin extends Plugin {
             const mv = await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]);
             totalMoved += mv.moved;
             const rep = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
-            if (p === "youtube") {
-              this.setStep("YouTube 队列位置刷新（稍后再看是栈，新加的顶上来）…");
-              await refreshYoutubeOrder(this.fsAdapter(), urlToPath, result.items);
-            }
+            this.setStep(`${PLATFORM_LABEL[p]}队列位置刷新（收藏夹是栈，新加的顶上来）…`);
+            await refreshQueueOrder(this.fsAdapter(), urlToPath, result.items);
             added = rep.added;
             totalAdded += added;
           } catch (e) {

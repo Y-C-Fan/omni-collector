@@ -49,6 +49,7 @@ export async function collectBilibili(http: HttpGet, cookieRaw: string): Promise
   for (const folder of folders) {
     let fpn = 1;
     let got = 0;
+    let qi = 0; // 本收藏夹内的队列位置（0=最上=最新收藏）
     const total = folder.media_count ?? 0;
     while (got < total && fpn <= 100) {
       const page = (await api(http, cookie, "/x/v3/fav/resource/list", {
@@ -72,6 +73,8 @@ export async function collectBilibili(http: HttpGet, cookieRaw: string): Promise
         it.description = ((m.intro as string) || "").slice(0, 200) || undefined;
         it.coverUrl = m.pic as string | undefined;
         it.folder = folder.title;
+        it.playlistIndex = qi;
+        qi += 1;
         it.publishedAt = toDateOnly(m.pubdate ?? m.created);
         items.push(it);
         got += 1;
@@ -85,6 +88,7 @@ export async function collectBilibili(http: HttpGet, cookieRaw: string): Promise
   const toview = (await api(http, cookie, "/x/v2/history/toview", {})) as {
     list?: Array<Record<string, unknown>>;
   };
+  let wlQi = 0; // 稍后再看队列位置（0=最上=最新加入）
   for (const v of toview.list ?? []) {
     const bvid = v.bvid as string | undefined;
     if (!bvid) continue;
@@ -93,6 +97,8 @@ export async function collectBilibili(http: HttpGet, cookieRaw: string): Promise
     it.author = owner?.name;
     it.coverUrl = v.pic as string | undefined;
     it.watchLater = true;
+    it.playlistIndex = wlQi;
+    wlQi += 1;
     it.publishedAt = toDateOnly(v.pubdate ?? v.add_dt);
     items.push(it);
   }

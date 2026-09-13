@@ -12,6 +12,11 @@ describe("github", () => {
     expect(items[0].coverUrl).toContain("avatars");
   });
 
+  it("parseStarredTsv records queue position (0=newest)", () => {
+    const items = parseStarredTsv("2026-09-11T06:06:18Z\ta/a\thttps://github.com/a/a\t\t\t\n2026-09-10T00:00:00Z\tb/b\thttps://github.com/b/b\t\t\t\n");
+    expect(items.map((i) => i.playlistIndex)).toEqual([0, 1]);
+  });
+
   it("collectGithub uses gh CLI", async () => {
     let seen: string[] = [];
     const run = async (cmd: string, args: string[]) => {

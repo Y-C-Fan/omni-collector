@@ -120,5 +120,9 @@ export async function collectX(http: HttpGet, cookieRaw: string, maxPages = 30):
     if (fresh.length === 0 || !cursor) break;
     await sleep(500);
   }
+  // 书签时间线倒序：数组下标即队列位置（0=最新）
+  items.forEach((it, i) => {
+    it.playlistIndex = i;
+  });
   return items;
 }

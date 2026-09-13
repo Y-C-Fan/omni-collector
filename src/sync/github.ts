@@ -17,14 +17,17 @@ function defaultRun(cmd: string, args: string[]): Promise<{ stdout: string; stde
   });
 }
 
-/** 纯函数：解析 TSV（starred_at, full_name, url, desc, lang, avatar）。 */
+/** 纯函数：解析 TSV（starred_at, full_name, url, desc, lang, avatar）；API 按 star 时间倒序，行号即队列位置。 */
 export function parseStarredTsv(tsv: string): CollectedItem[] {
   const items: CollectedItem[] = [];
+  let qi = 0;
   for (const line of tsv.split("\n")) {
     if (!line.trim()) continue;
     const [starredAt, full, url, desc, lang, avatar] = line.split("\t");
     if (!full || !url) continue;
     const it = makeItem("github", full, url, full.slice(0, 150));
+    it.playlistIndex = qi;
+    qi += 1;
     it.author = full.split("/")[0];
     it.description = [desc && desc !== "null" ? desc : "", lang && lang !== "null" ? `（${lang}）` : ""]
       .join("")

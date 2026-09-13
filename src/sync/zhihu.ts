@@ -32,6 +32,7 @@ export async function collectZhihu(http: HttpGet, secret: string): Promise<Colle
   const items: CollectedItem[] = [];
   for (const fav of favlists) {
     let offset = 0;
+    let qi = 0; // 本收藏夹内的队列位置（0=最上=最新收藏）
     for (;;) {
       const data = await zget(http, secret, "/api/v1/user/favlist_contents", {
         FavlistUrlToken: fav.UrlToken,
@@ -46,6 +47,8 @@ export async function collectZhihu(http: HttpGet, secret: string): Promise<Colle
         item.author = author?.Name;
         item.description = ((it.Summary as string) || "").slice(0, 200) || undefined;
         item.folder = fav.Title;
+        item.playlistIndex = qi;
+        qi += 1;
         item.publishedAt = toDateOnly(it.FavTime ?? it.CreatedAt);
         items.push(item);
       }

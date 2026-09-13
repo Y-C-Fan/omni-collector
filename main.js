@@ -524,6 +524,7 @@ async function collectBilibili(http, cookieRaw) {
   for (const folder of folders) {
     let fpn = 1;
     let got = 0;
+    let qi = 0;
     const total = folder.media_count ?? 0;
     while (got < total && fpn <= 100) {
       const page = await api(http, cookie, "/x/v3/fav/resource/list", {
@@ -547,6 +548,8 @@ async function collectBilibili(http, cookieRaw) {
         it.description = (m.intro || "").slice(0, 200) || void 0;
         it.coverUrl = m.pic;
         it.folder = folder.title;
+        it.playlistIndex = qi;
+        qi += 1;
         it.publishedAt = toDateOnly(m.pubdate ?? m.created);
         items.push(it);
         got += 1;
@@ -556,6 +559,7 @@ async function collectBilibili(http, cookieRaw) {
     }
   }
   const toview = await api(http, cookie, "/x/v2/history/toview", {});
+  let wlQi = 0;
   for (const v of toview.list ?? []) {
     const bvid = v.bvid;
     if (!bvid) continue;
@@ -564,6 +568,8 @@ async function collectBilibili(http, cookieRaw) {
     it.author = owner?.name;
     it.coverUrl = v.pic;
     it.watchLater = true;
+    it.playlistIndex = wlQi;
+    wlQi += 1;
     it.publishedAt = toDateOnly(v.pubdate ?? v.add_dt);
     items.push(it);
   }
@@ -587,11 +593,14 @@ function defaultRun(cmd, args) {
 }
 function parseStarredTsv(tsv) {
   const items = [];
+  let qi = 0;
   for (const line of tsv.split("\n")) {
     if (!line.trim()) continue;
     const [starredAt, full, url, desc, lang, avatar] = line.split("	");
     if (!full || !url) continue;
     const it = makeItem("github", full, url, full.slice(0, 150));
+    it.playlistIndex = qi;
+    qi += 1;
     it.author = full.split("/")[0];
     it.description = [desc && desc !== "null" ? desc : "", lang && lang !== "null" ? `\uFF08${lang}\uFF09` : ""].join("").slice(0, 200) || void 0;
     it.coverUrl = avatar && avatar !== "null" ? avatar : void 0;
@@ -768,6 +777,7 @@ async function collectZhihu(http, secret) {
   const items = [];
   for (const fav of favlists) {
     let offset = 0;
+    let qi = 0;
     for (; ; ) {
       const data = await zget(http, secret, "/api/v1/user/favlist_contents", {
         FavlistUrlToken: fav.UrlToken,
@@ -782,6 +792,8 @@ async function collectZhihu(http, secret) {
         item.author = author?.Name;
         item.description = (it.Summary || "").slice(0, 200) || void 0;
         item.folder = fav.Title;
+        item.playlistIndex = qi;
+        qi += 1;
         item.publishedAt = toDateOnly(it.FavTime ?? it.CreatedAt);
         items.push(item);
       }
@@ -907,6 +919,9 @@ async function collectX(http, cookieRaw, maxPages = 30) {
     if (fresh.length === 0 || !cursor) break;
     await sleep(500);
   }
+  items.forEach((it, i) => {
+    it.playlistIndex = i;
+  });
   return items;
 }
 
@@ -1029,6 +1044,9 @@ async function collectXiaoyuzhouHistory(http, creds, onCreds) {
       items.push(it);
     }
   }
+  items.forEach((it, i) => {
+    it.playlistIndex = i;
+  });
   return items;
 }
 
@@ -1116,10 +1134,10 @@ async function relocateItems(fs, favIdToPath, urlToPath, results) {
   }
   return { moved: movedPaths.length, movedPaths };
 }
-async function refreshYoutubeOrder(fs, urlToPath, items) {
+async function refreshQueueOrder(fs, urlToPath, items) {
   let updated = 0;
   for (const it of items) {
-    if (it.platform !== "youtube" || it.playlistIndex === void 0) continue;
+    if (it.playlistIndex === void 0) continue;
     const p = urlToPath.get(it.url);
     if (!p) continue;
     try {
@@ -1315,9 +1333,9 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       if (result.ok) this.setStep(`${PLATFORM_LABEL[platform]}\u6293\u5230 ${result.items.length} \u6761 \u2192 \u53BB\u91CD/\u5F52\u6863/\u843D\u76D8\u2026`);
       const moved = result.ok ? await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]) : { moved: 0, movedPaths: [] };
       const report = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
-      if (result.ok && platform === "youtube") {
-        this.setStep("YouTube \u961F\u5217\u4F4D\u7F6E\u5237\u65B0\uFF08\u7A0D\u540E\u518D\u770B\u662F\u6808\uFF0C\u65B0\u52A0\u7684\u9876\u4E0A\u6765\uFF09\u2026");
-        await refreshYoutubeOrder(this.fsAdapter(), urlToPath, result.items);
+      if (result.ok) {
+        this.setStep(`${PLATFORM_LABEL[platform]}\u961F\u5217\u4F4D\u7F6E\u5237\u65B0\uFF08\u6536\u85CF\u5939\u662F\u6808\uFF0C\u65B0\u52A0\u7684\u9876\u4E0A\u6765\uFF09\u2026`);
+        await refreshQueueOrder(this.fsAdapter(), urlToPath, result.items);
       }
       this.settings.lastSync[platform] = {
         at: (/* @__PURE__ */ new Date()).toISOString(),
@@ -1412,10 +1430,8 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
             const mv = await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]);
             totalMoved += mv.moved;
             const rep = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
-            if (p === "youtube") {
-              this.setStep("YouTube \u961F\u5217\u4F4D\u7F6E\u5237\u65B0\uFF08\u7A0D\u540E\u518D\u770B\u662F\u6808\uFF0C\u65B0\u52A0\u7684\u9876\u4E0A\u6765\uFF09\u2026");
-              await refreshYoutubeOrder(this.fsAdapter(), urlToPath, result.items);
-            }
+            this.setStep(`${PLATFORM_LABEL[p]}\u961F\u5217\u4F4D\u7F6E\u5237\u65B0\uFF08\u6536\u85CF\u5939\u662F\u6808\uFF0C\u65B0\u52A0\u7684\u9876\u4E0A\u6765\uFF09\u2026`);
+            await refreshQueueOrder(this.fsAdapter(), urlToPath, result.items);
             added = rep.added;
             totalAdded += added;
           } catch (e) {

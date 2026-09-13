@@ -90,8 +90,8 @@ describe("youtube queue", () => {
     expect(items.map((i) => i.playlistIndex)).toEqual([0, 1]);
   });
 
-  it("refreshYoutubeOrder rewrites only the index line", async () => {
-    const { refreshYoutubeOrder: refresh } = await import("../src/sync/runner.js");
+  it("refreshQueueOrder rewrites only the index line", async () => {
+    const { refreshQueueOrder: refresh } = await import("../src/sync/runner.js");
     const { makeItem } = await import("../src/sync/model.js");
     const store = new Map<string, string>([
       ["Fav Collector/youtube/A.md", '---\nplatform: "youtube"\nurl: "https://www.youtube.com/watch?v=a"\nplaylist_index: 9\n---\n# A\n\n## 我的笔记\n\n私密\n'],

@@ -242,5 +242,9 @@ export async function collectXiaoyuzhouHistory(
       items.push(it);
     }
   }
+  // 收听历史接口按时间倒序：数组下标即队列位置（0=最近听）
+  items.forEach((it, i) => {
+    it.playlistIndex = i;
+  });
   return items;
 }
