@@ -1,6 +1,6 @@
 {
   "name": "fav-collector-local",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Fav Collector (local-only): one-click favorites sync for Bilibili/YouTube/Zhihu/X, no engine, no database.",
   "type": "module",
   "scripts": {

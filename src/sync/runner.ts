@@ -93,6 +93,7 @@ export async function writeNewItems(
   existingUrls: Set<string>,
   results: PlatformResult[],
   enrichYoutube: (items: CollectedItem[]) => Promise<void>,
+  enrichGithub?: (items: CollectedItem[]) => Promise<void>,
 ): Promise<SyncReport> {
   const addedPaths: string[] = [];
   for (const r of results) {
@@ -103,6 +104,13 @@ export async function writeNewItems(
         await enrichYoutube(fresh);
       } catch {
         // 日期补不上不阻塞落盘
+      }
+    }
+    if (r.platform === "github" && fresh.length > 0) {
+      try {
+        await enrichGithub?.(fresh);
+      } catch {
+        // 简介翻不出不阻塞落盘
       }
     }
     for (const it of fresh) {

@@ -13,8 +13,21 @@ describe("github", () => {
   });
 
   it("parseStarredTsv records queue position (0=newest)", () => {
-    const items = parseStarredTsv("2026-09-11T06:06:18Z\ta/a\thttps://github.com/a/a\t\t\t\n2026-09-10T00:00:00Z\tb/b\thttps://github.com/b/b\t\t\t\n");
+    const items = parseStarredTsv("2026-09-11T06:06:18Z\ta/a\thttps://github.com/a/b\t\t\t\n2026-09-10T00:00:00Z\tb/b\thttps://github.com/b/b\t\t\t\n");
     expect(items.map((i) => i.playlistIndex)).toEqual([0, 1]);
+  });
+
+  it("enrichGithubDesc translates English intro, keeps lang suffix", async () => {
+    const { enrichGithubDesc: enrich } = await import("../src/sync/github.js");
+    const { makeItem } = await import("../src/sync/model.js");
+    const a = { ...makeItem("github", "a/a", "https://github.com/a", "a"), description: "A fast bundler（TypeScript）" };
+    const b = { ...makeItem("github", "b/b", "https://github.com/b", "b"), description: "中文简介（Python）" };
+    const c = { ...makeItem("github", "c/c", "https://github.com/c", "c") };
+    const fakeGet = async () => JSON.stringify([[["极速打包器", "A fast bundler", null, null, 1]], null, "en"]);
+    await enrich([a, b, c], fakeGet);
+    expect(a.description).toBe("极速打包器（TypeScript）");
+    expect(b.description).toBe("中文简介（Python）");
+    expect(c.description).toBeUndefined();
   });
 
   it("collectGithub uses gh CLI", async () => {

@@ -653,59 +653,16 @@ async function collectBilibili(http, cookieRaw) {
 }
 
 // src/sync/github.ts
+var import_node_child_process2 = require("node:child_process");
+
+// src/sync/youtube.ts
 var import_node_child_process = require("node:child_process");
-var GithubError = class extends Error {
+var YoutubeError = class extends Error {
 };
 function defaultRun(cmd, args) {
   return new Promise((resolve, reject) => {
-    (0, import_node_child_process.execFile)(cmd, args, { timeout: 3e5, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        reject(new GithubError(`gh \u5931\u8D25\uFF08\u5148\u8DD1 gh auth login\uFF09\uFF1A${`${stderr || err.message}`.slice(0, 200)}`));
-        return;
-      }
-      resolve({ stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
-    });
-  });
-}
-function parseStarredTsv(tsv) {
-  const items = [];
-  let qi = 0;
-  for (const line of tsv.split("\n")) {
-    if (!line.trim()) continue;
-    const [starredAt, full, url, desc, lang, avatar] = line.split("	");
-    if (!full || !url) continue;
-    const it = makeItem("github", full, url, full.slice(0, 150));
-    it.playlistIndex = qi;
-    qi += 1;
-    it.author = full.split("/")[0];
-    it.description = [desc && desc !== "null" ? desc : "", lang && lang !== "null" ? `\uFF08${lang}\uFF09` : ""].join("").slice(0, 200) || void 0;
-    it.coverUrl = avatar && avatar !== "null" ? avatar : void 0;
-    it.publishedAt = toDateOnly(starredAt);
-    items.push(it);
-  }
-  return items;
-}
-async function collectGithub(run = defaultRun) {
-  const { stdout } = await run("gh", [
-    "api",
-    "--paginate",
-    "user/starred?per_page=100",
-    "-H",
-    "Accept: application/vnd.github.v3.star+json",
-    "--jq",
-    '.[] | [.starred_at, .repo.full_name, .repo.html_url, (.repo.description // ""), (.repo.language // ""), .repo.owner.avatar_url] | @tsv'
-  ]);
-  return parseStarredTsv(stdout);
-}
-
-// src/sync/youtube.ts
-var import_node_child_process2 = require("node:child_process");
-var YoutubeError = class extends Error {
-};
-function defaultRun2(cmd, args) {
-  return new Promise((resolve, reject) => {
     const env = { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" };
-    (0, import_node_child_process2.execFile)(cmd, args, { timeout: 3e5, maxBuffer: 64 * 1024 * 1024, env }, (err, stdout, stderr) => {
+    (0, import_node_child_process.execFile)(cmd, args, { timeout: 3e5, maxBuffer: 64 * 1024 * 1024, env }, (err, stdout, stderr) => {
       if (err) {
         const msg = `${stderr || err.message}`.slice(0, 300);
         reject(new YoutubeError(`yt-dlp \u5931\u8D25: ${msg}`));
@@ -743,7 +700,7 @@ function parseFlatList(stdout, listId) {
   return items;
 }
 async function collectYoutube(opts) {
-  const run = opts.run ?? defaultRun2;
+  const run = opts.run ?? defaultRun;
   const { stdout } = await run(opts.ytdlpPath, [
     ...baseArgs(opts),
     "--print",
@@ -759,7 +716,7 @@ async function collectYoutube(opts) {
   return parseFlatList(stdout, "WL");
 }
 async function enrichYoutubeDates(opts, items) {
-  const run = opts.run ?? defaultRun2;
+  const run = opts.run ?? defaultRun;
   const withId = items.filter((it) => it.videoId);
   if (withId.length === 0) return;
   const urls = withId.map((it) => it.videoId).map((id) => `https://www.youtube.com/watch?v=${id}`);
@@ -796,7 +753,7 @@ async function translateEnToZh(text, httpGet) {
   return zh.length > 160 ? `${zh.slice(0, 160).trimEnd()}\u2026` : zh;
 }
 async function enrichYoutubeDesc(opts, items, httpGet) {
-  const run = opts.run ?? defaultRun2;
+  const run = opts.run ?? defaultRun;
   const withId = items.filter((it) => it.videoId && !it.description);
   if (withId.length === 0) return;
   const urls = withId.map((it) => `https://www.youtube.com/watch?v=${it.videoId}`);
@@ -819,6 +776,65 @@ async function enrichYoutubeDesc(opts, items, httpGet) {
     if (!snippet) continue;
     try {
       it.description = isMostlyChinese(snippet) ? snippet.length > 160 ? `${snippet.slice(0, 160).trimEnd()}\u2026` : snippet : await translateEnToZh(snippet, httpGet);
+    } catch {
+    }
+  }
+}
+
+// src/sync/github.ts
+var GithubError = class extends Error {
+};
+function defaultRun2(cmd, args) {
+  return new Promise((resolve, reject) => {
+    (0, import_node_child_process2.execFile)(cmd, args, { timeout: 3e5, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) {
+        reject(new GithubError(`gh \u5931\u8D25\uFF08\u5148\u8DD1 gh auth login\uFF09\uFF1A${`${stderr || err.message}`.slice(0, 200)}`));
+        return;
+      }
+      resolve({ stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+    });
+  });
+}
+function parseStarredTsv(tsv) {
+  const items = [];
+  let qi = 0;
+  for (const line of tsv.split("\n")) {
+    if (!line.trim()) continue;
+    const [starredAt, full, url, desc, lang, avatar] = line.split("	");
+    if (!full || !url) continue;
+    const it = makeItem("github", full, url, full.slice(0, 150));
+    it.playlistIndex = qi;
+    qi += 1;
+    it.author = full.split("/")[0];
+    it.description = [desc && desc !== "null" ? desc : "", lang && lang !== "null" ? `\uFF08${lang}\uFF09` : ""].join("").slice(0, 200) || void 0;
+    it.coverUrl = avatar && avatar !== "null" ? avatar : void 0;
+    it.publishedAt = toDateOnly(starredAt);
+    items.push(it);
+  }
+  return items;
+}
+async function collectGithub(run = defaultRun2) {
+  const { stdout } = await run("gh", [
+    "api",
+    "--paginate",
+    "user/starred?per_page=100",
+    "-H",
+    "Accept: application/vnd.github.v3.star+json",
+    "--jq",
+    '.[] | [.starred_at, .repo.full_name, .repo.html_url, (.repo.description // ""), (.repo.language // ""), .repo.owner.avatar_url] | @tsv'
+  ]);
+  return parseStarredTsv(stdout);
+}
+async function enrichGithubDesc(items, httpGet) {
+  for (const it of items) {
+    if (!it.description) continue;
+    const m = it.description.match(/^(.*?)（([^（）]*)）$/);
+    const body = (m ? m[1] : it.description).trim();
+    const lang = m ? `\uFF08${m[2]}\uFF09` : "";
+    if (!body || isMostlyChinese(body)) continue;
+    try {
+      const zh = await translateEnToZh(body.length > 600 ? body.slice(0, 600) : body, httpGet);
+      it.description = `${zh}${lang}`;
     } catch {
     }
   }
@@ -1160,7 +1176,7 @@ async function syncPlatform(platform, settings, deps) {
     return { platform, ok: false, items: [], error: e.message };
   }
 }
-async function writeNewItems(fs, existingFavIds, existingUrls, results, enrichYoutube) {
+async function writeNewItems(fs, existingFavIds, existingUrls, results, enrichYoutube, enrichGithub) {
   const addedPaths = [];
   for (const r of results) {
     if (!r.ok) continue;
@@ -1168,6 +1184,12 @@ async function writeNewItems(fs, existingFavIds, existingUrls, results, enrichYo
     if (r.platform === "youtube" && fresh.length > 0) {
       try {
         await enrichYoutube(fresh);
+      } catch {
+      }
+    }
+    if (r.platform === "github" && fresh.length > 0) {
+      try {
+        await enrichGithub?.(fresh);
       } catch {
       }
     }
@@ -1432,7 +1454,7 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       const { favIds, urls, favIdToPath, urlToPath } = await this.scanExisting();
       if (result.ok) this.setStep(`${PLATFORM_LABEL[platform]}\u6293\u5230 ${result.items.length} \u6761 \u2192 \u53BB\u91CD/\u5F52\u6863/\u843D\u76D8\u2026`);
       const moved = result.ok ? await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]) : { moved: 0, movedPaths: [] };
-      const report = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
+      const report = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich(), this.ghEnrich());
       let trashed = 0;
       if (result.ok) {
         this.setStep(`${PLATFORM_LABEL[platform]}\u961F\u5217\u4F4D\u7F6E\u5237\u65B0\uFF08\u6536\u85CF\u5939\u662F\u6808\uFF0C\u65B0\u52A0\u7684\u9876\u4E0A\u6765\uFF09\u2026`);
@@ -1495,6 +1517,16 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       }
     };
   }
+  /** GitHub 新 star 简介汉化（API 自带英文简介，无 key 走 gtx）。 */
+  ghEnrich() {
+    const gtxGet = async (url) => (await (0, import_obsidian3.requestUrl)({ url })).text;
+    return async (items) => {
+      try {
+        await enrichGithubDesc(items, gtxGet);
+      } catch {
+      }
+    };
+  }
   async syncAll() {
     if (this.syncing) {
       new import_obsidian3.Notice("\u6B63\u5728\u540C\u6B65\u4E2D\uFF0C\u7A0D\u7B49\u2026");
@@ -1533,7 +1565,7 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
             );
             const mv = await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]);
             totalMoved += mv.moved;
-            const rep = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
+            const rep = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich(), this.ghEnrich());
             this.setStep(`${PLATFORM_LABEL[p]}\u961F\u5217\u4F4D\u7F6E\u5237\u65B0\uFF08\u6536\u85CF\u5939\u662F\u6808\uFF0C\u65B0\u52A0\u7684\u9876\u4E0A\u6765\uFF09\u2026`);
             await refreshQueueOrder(this.fsAdapter(), urlToPath, result.items);
             this.setStep(`${PLATFORM_LABEL[p]}\u68C0\u67E5\u8FDC\u7AEF\u5DF2\u5220\u9664\uFF08\u8FDB\u56DE\u6536\u7AD9\uFF0C\u4E0D\u771F\u5220\uFF09\u2026`);

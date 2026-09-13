@@ -8,6 +8,7 @@ import { FavDashboardView, VIEW_TYPE_FAV_DASHBOARD } from "./ui/dashboard.js";
 import { parseFrontmatter } from "./markdown/writer.js";
 import { syncPlatform, writeNewItems, relocateItems, refreshQueueOrder, collectGarbage } from "./sync/runner.js";
 import { enrichYoutubeDates, enrichYoutubeDesc } from "./sync/youtube.js";
+import { enrichGithubDesc } from "./sync/github.js";
 import { PLATFORMS, PLATFORM_LABEL } from "./sync/model.js";
 import type { CollectedItem, HttpGet, Platform, PlatformResult } from "./sync/model.js";
 import type { XyzCreds } from "./sync/xiaoyuzhou.js";
@@ -211,7 +212,7 @@ export default class FavCollectorPlugin extends Plugin {
       const moved = result.ok
         ? await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result])
         : { moved: 0, movedPaths: [] as string[] };
-      const report = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
+      const report = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich(), this.ghEnrich());
       let trashed = 0;
       if (result.ok) {
         this.setStep(`${PLATFORM_LABEL[platform]}队列位置刷新（收藏夹是栈，新加的顶上来）…`);
@@ -279,6 +280,18 @@ export default class FavCollectorPlugin extends Plugin {
     };
   }
 
+  /** GitHub 新 star 简介汉化（API 自带英文简介，无 key 走 gtx）。 */
+  private ghEnrich() {
+    const gtxGet = async (url: string) => (await requestUrl({ url })).text;
+    return async (items: CollectedItem[]) => {
+      try {
+        await enrichGithubDesc(items, gtxGet);
+      } catch {
+        // 翻不出留英文，不阻塞
+      }
+    };
+  }
+
   async syncAll(): Promise<void> {
     if (this.syncing) {
       new Notice("正在同步中，稍等…");
@@ -319,7 +332,7 @@ export default class FavCollectorPlugin extends Plugin {
             );
             const mv = await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]);
             totalMoved += mv.moved;
-            const rep = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
+            const rep = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich(), this.ghEnrich());
             this.setStep(`${PLATFORM_LABEL[p]}队列位置刷新（收藏夹是栈，新加的顶上来）…`);
             await refreshQueueOrder(this.fsAdapter(), urlToPath, result.items);
             this.setStep(`${PLATFORM_LABEL[p]}检查远端已删除（进回收站，不真删）…`);
