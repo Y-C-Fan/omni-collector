@@ -180,38 +180,59 @@ export class FavDashboardView extends ItemView {
       }
       return;
     }
-    const shown = cards.filter((c) => this.filter === "all" || c.platform === this.filter);
-    let groups = groupCards(shown, this.filter);
-    // 收藏夹筛选条
-    if (groups.length > 1) {
-      const folderBar = el.createDiv({ cls: "fav-filter" });
-      const allB = folderBar.createEl("button", { text: `全部文件夹（${shown.length}）`, cls: this.folderFilter === "all" ? "active" : "" });
-      allB.onclick = () => {
-        this.folderFilter = "all";
-        void this.render();
-      };
-      for (const g of groups) {
-        const b = folderBar.createEl("button", { text: `${g.label}（${g.items.length}）`, cls: g.key === this.folderFilter ? "active" : "" });
-        b.onclick = () => {
-          this.folderFilter = g.key;
-          void this.render();
-        };
-      }
-      if (this.folderFilter !== "all") groups = groups.filter((g) => g.key === this.folderFilter);
-    }
     const now = new Date();
     const stamp = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}:${now.getSeconds().toString().padStart(2, "0")}`;
     status.setText(
-      `共 ${cards.length} 条${this.filter !== "all" ? `（${PLATFORM_LABEL[this.filter as Platform]} ${shown.length} 条）` : ""} · 扫描 ${scanned} 文件${skipped > 0 ? `（跳过 ${skipped} 无元数据）` : ""} · 更新于 ${stamp}`,
+      `共 ${cards.length} 条${this.filter !== "all" ? `（${PLATFORM_LABEL[this.filter as Platform]}）` : ""} · 扫描 ${scanned} 文件${skipped > 0 ? `（跳过 ${skipped} 无元数据）` : ""} · 更新于 ${stamp}`,
+    );
+    // 分层：第一层平台，第二层该平台的收藏夹（点收藏夹 chips 下钻，点平台名回全部）
+    const platformsToShow = (this.filter === "all" ? PLATFORMS : [this.filter as Platform]).filter((p) =>
+      cards.some((c) => c.platform === p),
     );
     let rendered = 0;
-    for (const g of groups) {
-      if (this.folderFilter === "all") el.createEl("h4", { text: `${g.label}（${g.items.length}）`, cls: "fav-group-title" });
-      const grid = el.createDiv({ cls: "fav-cards" });
-      for (const c of g.items) {
+    for (const p of platformsToShow) {
+      const pcards = cards.filter((c) => c.platform === p);
+      const pgroups = groupCards(pcards, p);
+      const drilled = this.filter === p && this.folderFilter !== "all";
+      const h3 = el.createEl("h3", { text: `${PLATFORM_LABEL[p]}（${pcards.length}）`, cls: "fav-platform-title" });
+      h3.onclick = () => {
+        this.filter = p;
+        this.folderFilter = "all";
+        void this.render();
+      };
+      if (pgroups.length > 1) {
+        const folderBar = el.createDiv({ cls: "fav-filter" });
+        const allB = folderBar.createEl("button", {
+          text: `全部（${pcards.length}）`,
+          cls: this.folderFilter === "all" && (this.filter === "all" || this.filter === p) ? "active" : "",
+        });
+        allB.onclick = () => {
+          this.filter = p;
+          this.folderFilter = "all";
+          void this.render();
+        };
+        for (const g of pgroups) {
+          const b = folderBar.createEl("button", {
+            text: `${g.label}（${g.items.length}）`,
+            cls: this.filter === p && g.key === this.folderFilter ? "active" : "",
+          });
+          b.onclick = () => {
+            this.filter = p;
+            this.folderFilter = g.key;
+            void this.render();
+          };
+        }
+      }
+      const show = drilled ? pgroups.filter((g) => g.key === this.folderFilter) : pgroups;
+      for (const g of show) {
+        if (!drilled && pgroups.length > 1) el.createEl("h4", { text: `${g.label}（${g.items.length}）`, cls: "fav-group-title" });
+        const grid = el.createDiv({ cls: "fav-cards" });
+        for (const c of g.items) {
+          if (rendered >= 500) break;
+          rendered += 1;
+          this.cardEl(grid, c);
+        }
         if (rendered >= 500) break;
-        rendered += 1;
-        this.cardEl(grid, c);
       }
       if (rendered >= 500) break;
     }
@@ -260,7 +281,7 @@ export class FavDashboardView extends ItemView {
         skipped += 1;
       }
     }
-    // 队列优先（YouTube 稍后再看/喜欢：位置号小=新加入在上）；其余按时间倒序→入库倒序
+    // 队列优先（YouTube 稍后再看：位置号小=新加入在上）；其余按时间倒序→入库倒序
     out.sort((a, b) => {
       const aq = a.queueIndex;
       const bq = b.queueIndex;

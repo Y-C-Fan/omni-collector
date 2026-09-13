@@ -433,37 +433,58 @@ var FavDashboardView = class extends import_obsidian2.ItemView {
       }
       return;
     }
-    const shown = cards.filter((c) => this.filter === "all" || c.platform === this.filter);
-    let groups = groupCards(shown, this.filter);
-    if (groups.length > 1) {
-      const folderBar = el.createDiv({ cls: "fav-filter" });
-      const allB = folderBar.createEl("button", { text: `\u5168\u90E8\u6587\u4EF6\u5939\uFF08${shown.length}\uFF09`, cls: this.folderFilter === "all" ? "active" : "" });
-      allB.onclick = () => {
-        this.folderFilter = "all";
-        void this.render();
-      };
-      for (const g of groups) {
-        const b = folderBar.createEl("button", { text: `${g.label}\uFF08${g.items.length}\uFF09`, cls: g.key === this.folderFilter ? "active" : "" });
-        b.onclick = () => {
-          this.folderFilter = g.key;
-          void this.render();
-        };
-      }
-      if (this.folderFilter !== "all") groups = groups.filter((g) => g.key === this.folderFilter);
-    }
     const now = /* @__PURE__ */ new Date();
     const stamp = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}:${now.getSeconds().toString().padStart(2, "0")}`;
     status.setText(
-      `\u5171 ${cards.length} \u6761${this.filter !== "all" ? `\uFF08${PLATFORM_LABEL[this.filter]} ${shown.length} \u6761\uFF09` : ""} \xB7 \u626B\u63CF ${scanned} \u6587\u4EF6${skipped > 0 ? `\uFF08\u8DF3\u8FC7 ${skipped} \u65E0\u5143\u6570\u636E\uFF09` : ""} \xB7 \u66F4\u65B0\u4E8E ${stamp}`
+      `\u5171 ${cards.length} \u6761${this.filter !== "all" ? `\uFF08${PLATFORM_LABEL[this.filter]}\uFF09` : ""} \xB7 \u626B\u63CF ${scanned} \u6587\u4EF6${skipped > 0 ? `\uFF08\u8DF3\u8FC7 ${skipped} \u65E0\u5143\u6570\u636E\uFF09` : ""} \xB7 \u66F4\u65B0\u4E8E ${stamp}`
+    );
+    const platformsToShow = (this.filter === "all" ? PLATFORMS : [this.filter]).filter(
+      (p) => cards.some((c) => c.platform === p)
     );
     let rendered = 0;
-    for (const g of groups) {
-      if (this.folderFilter === "all") el.createEl("h4", { text: `${g.label}\uFF08${g.items.length}\uFF09`, cls: "fav-group-title" });
-      const grid = el.createDiv({ cls: "fav-cards" });
-      for (const c of g.items) {
+    for (const p of platformsToShow) {
+      const pcards = cards.filter((c) => c.platform === p);
+      const pgroups = groupCards(pcards, p);
+      const drilled = this.filter === p && this.folderFilter !== "all";
+      const h3 = el.createEl("h3", { text: `${PLATFORM_LABEL[p]}\uFF08${pcards.length}\uFF09`, cls: "fav-platform-title" });
+      h3.onclick = () => {
+        this.filter = p;
+        this.folderFilter = "all";
+        void this.render();
+      };
+      if (pgroups.length > 1) {
+        const folderBar = el.createDiv({ cls: "fav-filter" });
+        const allB = folderBar.createEl("button", {
+          text: `\u5168\u90E8\uFF08${pcards.length}\uFF09`,
+          cls: this.folderFilter === "all" && (this.filter === "all" || this.filter === p) ? "active" : ""
+        });
+        allB.onclick = () => {
+          this.filter = p;
+          this.folderFilter = "all";
+          void this.render();
+        };
+        for (const g of pgroups) {
+          const b = folderBar.createEl("button", {
+            text: `${g.label}\uFF08${g.items.length}\uFF09`,
+            cls: this.filter === p && g.key === this.folderFilter ? "active" : ""
+          });
+          b.onclick = () => {
+            this.filter = p;
+            this.folderFilter = g.key;
+            void this.render();
+          };
+        }
+      }
+      const show = drilled ? pgroups.filter((g) => g.key === this.folderFilter) : pgroups;
+      for (const g of show) {
+        if (!drilled && pgroups.length > 1) el.createEl("h4", { text: `${g.label}\uFF08${g.items.length}\uFF09`, cls: "fav-group-title" });
+        const grid = el.createDiv({ cls: "fav-cards" });
+        for (const c of g.items) {
+          if (rendered >= 500) break;
+          rendered += 1;
+          this.cardEl(grid, c);
+        }
         if (rendered >= 500) break;
-        rendered += 1;
-        this.cardEl(grid, c);
       }
       if (rendered >= 500) break;
     }
@@ -723,23 +744,19 @@ function parseFlatList(stdout, listId) {
 }
 async function collectYoutube(opts) {
   const run = opts.run ?? defaultRun2;
-  const items = [];
-  for (const listId of ["WL", "LL"]) {
-    const { stdout } = await run(opts.ytdlpPath, [
-      ...baseArgs(opts),
-      "--print",
-      "%(id)s	%(title)s",
-      `https://www.youtube.com/playlist?list=${listId}`
-    ]).catch((e) => {
-      const msg = e.message;
-      if (msg.includes("does not exist") && listId === "WL") {
-        throw new YoutubeError("YouTube WL \u4E0D\u5B58\u5728\uFF1A\u5927\u6982\u7387\u767B\u5F55\u8FC7\u671F\uFF0C\u91CD\u5BFC cookie \u6216\u68C0\u67E5 Firefox \u94A5\u5319\u6263");
-      }
-      throw e;
-    });
-    items.push(...parseFlatList(stdout, listId));
-  }
-  return items;
+  const { stdout } = await run(opts.ytdlpPath, [
+    ...baseArgs(opts),
+    "--print",
+    "%(id)s	%(title)s",
+    "https://www.youtube.com/playlist?list=WL"
+  ]).catch((e) => {
+    const msg = e.message;
+    if (msg.includes("does not exist")) {
+      throw new YoutubeError("YouTube WL \u4E0D\u5B58\u5728\uFF1A\u5927\u6982\u7387\u767B\u5F55\u8FC7\u671F\uFF0C\u91CD\u5BFC cookie \u6216\u68C0\u67E5 Firefox \u94A5\u5319\u6263");
+    }
+    throw e;
+  });
+  return parseFlatList(stdout, "WL");
 }
 async function enrichYoutubeDates(opts, items) {
   const run = opts.run ?? defaultRun2;
@@ -1280,7 +1297,7 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
   fetchHow(p) {
     switch (p) {
       case "youtube":
-        return "yt-dlp \u626B WL/LL\uFF08flat\uFF0C\u9700 cookies\uFF09";
+        return "yt-dlp \u626B\u7A0D\u540E\u518D\u770B\uFF08flat\uFF0C\u9700 cookies\uFF09";
       case "github":
         return "gh api \u62C9 stars";
       case "x":

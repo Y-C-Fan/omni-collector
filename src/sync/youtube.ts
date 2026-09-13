@@ -1,4 +1,4 @@
-/** YouTube：Watch Later + Liked，yt-dlp 子进程 flat 抓取（标题级增量才补日期）。 */
+/** YouTube：只要 Watch Later（喜欢不同步），yt-dlp 子进程 flat 抓取（标题级增量才补日期）。 */
 import { execFile } from "node:child_process";
 import { makeItem } from "./model.js";
 import type { CollectedItem, RunFn } from "./model.js";
@@ -62,23 +62,19 @@ export function parseFlatList(stdout: string, listId: "WL" | "LL"): CollectedIte
 
 export async function collectYoutube(opts: YoutubeOptions): Promise<CollectedItem[]> {
   const run = opts.run ?? defaultRun;
-  const items: CollectedItem[] = [];
-  for (const listId of ["WL", "LL"] as const) {
-    const { stdout } = await run(opts.ytdlpPath, [
-      ...baseArgs(opts),
-      "--print",
-      "%(id)s\t%(title)s",
-      `https://www.youtube.com/playlist?list=${listId}`,
-    ]).catch((e) => {
-      const msg = (e as Error).message;
-      if (msg.includes("does not exist") && listId === "WL") {
-        throw new YoutubeError("YouTube WL 不存在：大概率登录过期，重导 cookie 或检查 Firefox 钥匙扣");
-      }
-      throw e;
-    });
-    items.push(...parseFlatList(stdout, listId));
-  }
-  return items;
+  const { stdout } = await run(opts.ytdlpPath, [
+    ...baseArgs(opts),
+    "--print",
+    "%(id)s\t%(title)s",
+    "https://www.youtube.com/playlist?list=WL",
+  ]).catch((e) => {
+    const msg = (e as Error).message;
+    if (msg.includes("does not exist")) {
+      throw new YoutubeError("YouTube WL 不存在：大概率登录过期，重导 cookie 或检查 Firefox 钥匙扣");
+    }
+    throw e;
+  });
+  return parseFlatList(stdout, "WL");
 }
 
 /** 仅对新增视频补发布日期（upload_date），存量跳过。 */

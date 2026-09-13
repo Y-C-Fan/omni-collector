@@ -24,7 +24,7 @@ export interface SyncPlatformProgress {
 export interface SyncProgress {
   running: boolean;
   current?: Platform;
-  /** 正在干嘛（一行，如"抓 YouTube（yt-dlp 扫 WL/LL）…"） */
+  /** 正在干嘛（一行，如"抓 YouTube（yt-dlp 扫稍后再看）…"） */
   step?: string;
   done: SyncPlatformProgress[];
   startedAt?: string;
@@ -60,7 +60,7 @@ export default class FavCollectorPlugin extends Plugin {
   private fetchHow(p: Platform): string {
     switch (p) {
       case "youtube":
-        return "yt-dlp 扫 WL/LL（flat，需 cookies）";
+        return "yt-dlp 扫稍后再看（flat，需 cookies）";
       case "github":
         return "gh api 拉 stars";
       case "x":

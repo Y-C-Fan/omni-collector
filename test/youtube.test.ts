@@ -20,13 +20,15 @@ describe("youtube", () => {
     expect(ll[0].folder).toBe("喜欢");
   });
 
-  it("collectYoutube collects WL + LL via fake run", async () => {
+  it("collectYoutube only fetches Watch Later", async () => {
+    const seen: string[] = [];
     const run = async (_cmd: string, args: string[]) => {
-      const list = args[args.length - 1].includes("list=WL") ? "WL" : "LL";
-      return { stdout: list === "WL" ? "v1\tT1\n" : "v2\tT2\n", stderr: "" };
+      seen.push(args[args.length - 1]);
+      return { stdout: "v1\tT1\n", stderr: "" };
     };
     const items = await collectYoutube({ ytdlpPath: "yt-dlp", run });
-    expect(items.map((i) => i.nativeId)).toEqual(["WL_v1", "LL_v2"]);
+    expect(seen).toEqual(["https://www.youtube.com/playlist?list=WL"]);
+    expect(items.map((i) => i.nativeId)).toEqual(["WL_v1"]);
   });
 
   it("collectYoutube maps WL-missing to friendly error", async () => {
