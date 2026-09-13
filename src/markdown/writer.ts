@@ -51,10 +51,11 @@ export interface NoteIndex {
   urls: Set<string>;
 }
 
-/** 解析 frontmatter（dashboard + 去重共用，极简 YAML 子集）。 */
+/** 解析 frontmatter（dashboard + 去重共用，极简 YAML 子集；兼容 CRLF）。 */
 export function parseFrontmatter(md: string): Record<string, string> {
+  const norm = md.replace(/\r\n?/g, "\n");
   const out: Record<string, string> = {};
-  const m = md.match(/^---\n([\s\S]*?)\n---\n/);
+  const m = norm.match(/^---\n([\s\S]*?)\n---\n/);
   if (!m) return out;
   for (const line of m[1].split("\n")) {
     const i = line.indexOf(":");
@@ -92,6 +93,7 @@ export interface CardData {
 }
 
 export function cardFromNote(path: string, md: string, ctime = 0): CardData | null {
+  md = md.replace(/\r\n?/g, "\n");
   const fm = parseFrontmatter(md);
   if (!fm.platform || !fm.url) return null;
   // 旧版笔记第一个 H1 是系统区标记行，跳过它取真正的标题

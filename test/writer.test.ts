@@ -71,3 +71,18 @@ describe("writer", () => {
     expect(all.map((g) => g.label)).toEqual(["B站 · B", "YouTube · X"]);
   });
 });
+
+
+describe("writer crlf", () => {
+  it("parseFrontmatter + cardFromNote accept CRLF files", async () => {
+    const { parseFrontmatter: pfm, cardFromNote: cfn } = await import("../src/markdown/writer.js");
+    const crlf = '---\r\nplatform: "youtube"\r\nfav_id: "youtube:WL_abc"\r\nurl: "https://www.youtube.com/watch?v=abc"\r\npublished_at: "2024-05-01"\r\n---\r\n# T\r\n';
+    expect(pfm(crlf).platform).toBe("youtube");
+    expect(pfm(crlf).published_at).toBe("2024-05-01");
+    const card = cfn("Fav Collector/youtube/T.md", crlf, 7);
+    expect(card?.title).toBe("T");
+    expect(card?.sortKey).toBe("2024-05-01");
+    expect(card?.dateLabel).toBe("2024-05-01");
+    expect(card?.ctime).toBe(7);
+  });
+});

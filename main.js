@@ -192,8 +192,9 @@ function buildNote(item) {
   return fm.join("\n");
 }
 function parseFrontmatter(md) {
+  const norm = md.replace(/\r\n?/g, "\n");
   const out = {};
-  const m = md.match(/^---\n([\s\S]*?)\n---\n/);
+  const m = norm.match(/^---\n([\s\S]*?)\n---\n/);
   if (!m) return out;
   for (const line of m[1].split("\n")) {
     const i = line.indexOf(":");
@@ -212,6 +213,7 @@ function parseFrontmatter(md) {
   return out;
 }
 function cardFromNote(path, md, ctime = 0) {
+  md = md.replace(/\r\n?/g, "\n");
   const fm = parseFrontmatter(md);
   if (!fm.platform || !fm.url) return null;
   const headings = [...md.matchAll(/^# (.+)$/gm)].map((m) => m[1]).filter((h) => h !== "Fav Collector System Zone");
