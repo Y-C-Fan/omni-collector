@@ -674,6 +674,55 @@ async function enrichYoutubeDates(opts, items) {
     if (d) it.publishedAt = d;
   }
 }
+function snippetForTranslate(desc, maxLen = 600) {
+  const oneLine = desc.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= maxLen) return oneLine;
+  const cut = oneLine.slice(0, maxLen);
+  const lastEnd = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "), cut.lastIndexOf("\u3002"));
+  return (lastEnd > maxLen * 0.4 ? cut.slice(0, lastEnd + 1) : cut).trim();
+}
+function isMostlyChinese(text) {
+  if (!text) return true;
+  const cjk = (text.match(/[\u4e00-\u9fff]/g) ?? []).length;
+  return cjk * 2 >= text.length;
+}
+async function translateEnToZh(text, httpGet) {
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=${encodeURIComponent(text)}`;
+  const raw = await httpGet(url);
+  const data = JSON.parse(raw);
+  if (!Array.isArray(data) || !Array.isArray(data[0])) throw new Error("bad gtx response");
+  const zh = data[0].filter((seg) => Array.isArray(seg) && typeof seg[0] === "string").map((seg) => seg[0]).join("").trim();
+  if (!zh) throw new Error("empty translation");
+  return zh.length > 160 ? `${zh.slice(0, 160).trimEnd()}\u2026` : zh;
+}
+async function enrichYoutubeDesc(opts, items, httpGet) {
+  const run = opts.run ?? defaultRun2;
+  const withId = items.filter((it) => it.videoId && !it.description);
+  if (withId.length === 0) return;
+  const urls = withId.map((it) => `https://www.youtube.com/watch?v=${it.videoId}`);
+  const { stdout } = await run(opts.ytdlpPath, [...baseArgs(opts), "--print", "%(id)s	%(description)j", ...urls]);
+  const descs = /* @__PURE__ */ new Map();
+  for (const line of stdout.split("\n")) {
+    const tab = line.indexOf("	");
+    if (tab <= 0) continue;
+    try {
+      const d = JSON.parse(line.slice(tab + 1));
+      if (typeof d === "string" && d.trim()) descs.set(line.slice(0, tab), d);
+    } catch {
+    }
+  }
+  for (const it of withId) {
+    const vid = it.videoId;
+    const raw = descs.get(vid);
+    if (!raw) continue;
+    const snippet = snippetForTranslate(raw);
+    if (!snippet) continue;
+    try {
+      it.description = isMostlyChinese(snippet) ? snippet.length > 160 ? `${snippet.slice(0, 160).trimEnd()}\u2026` : snippet : await translateEnToZh(snippet, httpGet);
+    } catch {
+    }
+  }
+}
 
 // src/sync/zhihu.ts
 var BASE = "https://developer.zhihu.com";
@@ -1233,7 +1282,17 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
   }
   ytEnrich() {
     const s = this.runnerSettings();
-    return (items) => enrichYoutubeDates({ ytdlpPath: s.ytdlpPath, cookieFile: s.ytCookieFile }, items);
+    const gtxGet = async (url) => (await (0, import_obsidian3.requestUrl)({ url })).text;
+    return async (items) => {
+      try {
+        await enrichYoutubeDates({ ytdlpPath: s.ytdlpPath, cookieFile: s.ytCookieFile }, items);
+      } catch {
+      }
+      try {
+        await enrichYoutubeDesc({ ytdlpPath: s.ytdlpPath, cookieFile: s.ytCookieFile }, items, gtxGet);
+      } catch {
+      }
+    };
   }
   async syncAll() {
     if (this.syncing) {

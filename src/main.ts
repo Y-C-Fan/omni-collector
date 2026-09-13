@@ -7,7 +7,7 @@ import { DEFAULT_SETTINGS, type FavSettings } from "./settings.js";import { FavS
 import { FavDashboardView, VIEW_TYPE_FAV_DASHBOARD } from "./ui/dashboard.js";
 import { parseFrontmatter } from "./markdown/writer.js";
 import { syncPlatform, writeNewItems, relocateItems } from "./sync/runner.js";
-import { enrichYoutubeDates } from "./sync/youtube.js";
+import { enrichYoutubeDates, enrichYoutubeDesc } from "./sync/youtube.js";
 import { PLATFORMS } from "./sync/model.js";
 import type { CollectedItem, HttpGet, Platform, PlatformResult } from "./sync/model.js";
 import type { XyzCreds } from "./sync/xiaoyuzhou.js";
@@ -213,8 +213,19 @@ export default class FavCollectorPlugin extends Plugin {
 
   private ytEnrich() {
     const s = this.runnerSettings();
-    return (items: CollectedItem[]) =>
-      enrichYoutubeDates({ ytdlpPath: s.ytdlpPath, cookieFile: s.ytCookieFile }, items);
+    const gtxGet = async (url: string) => (await requestUrl({ url })).text;
+    return async (items: CollectedItem[]) => {
+      try {
+        await enrichYoutubeDates({ ytdlpPath: s.ytdlpPath, cookieFile: s.ytCookieFile }, items);
+      } catch {
+        // 日期补不上不阻塞落盘
+      }
+      try {
+        await enrichYoutubeDesc({ ytdlpPath: s.ytdlpPath, cookieFile: s.ytCookieFile }, items, gtxGet);
+      } catch {
+        // 简介补不上不阻塞落盘
+      }
+    };
   }
 
   async syncAll(): Promise<void> {

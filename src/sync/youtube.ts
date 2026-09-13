@@ -79,8 +79,7 @@ export async function collectYoutube(opts: YoutubeOptions): Promise<CollectedIte
 }
 
 /** 仅对新增视频补发布日期（upload_date），存量跳过。 */
-export async function enrichYoutubeDates(opts: YoutubeOptions, items: CollectedItem[]): Promise<void> {
-  const run = opts.run ?? defaultRun;
+export async function enrichYoutubeDates(opts: YoutubeOptions, items: CollectedItem[]): Promise<void> {  const run = opts.run ?? defaultRun;
   const withId = items.filter((it) => (it as CollectedItem & { videoId?: string }).videoId);
   if (withId.length === 0) return;
   const urls = withId.map((it) => (it as CollectedItem & { videoId?: string }).videoId as string).map((id) => `https://www.youtube.com/watch?v=${id}`);
@@ -93,5 +92,77 @@ export async function enrichYoutubeDates(opts: YoutubeOptions, items: CollectedI
   for (const it of withId) {
     const d = dates.get((it as CollectedItem & { videoId?: string }).videoId as string);
     if (d) it.publishedAt = d;
+  }
+}
+
+/** 取英文简介前 N 字（按句切断），供翻译。 */
+export function snippetForTranslate(desc: string, maxLen = 600): string {
+  const oneLine = desc.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= maxLen) return oneLine;
+  const cut = oneLine.slice(0, maxLen);
+  const lastEnd = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "), cut.lastIndexOf("。"));
+  return (lastEnd > maxLen * 0.4 ? cut.slice(0, lastEnd + 1) : cut).trim();
+}
+
+/** 判断是否已是中文（CJK 占比过半则不翻）。 */
+export function isMostlyChinese(text: string): boolean {
+  if (!text) return true;
+  const cjk = (text.match(/[\u4e00-\u9fff]/g) ?? []).length;
+  return cjk * 2 >= text.length;
+}
+
+/** gtx 免费端点英→中（无 key；失败抛错由调用方吞掉并回退原文）。 */
+export async function translateEnToZh(text: string, httpGet: (url: string) => Promise<string>): Promise<string> {
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=${encodeURIComponent(text)}`;
+  const raw = await httpGet(url);
+  const data = JSON.parse(raw) as unknown;
+  if (!Array.isArray(data) || !Array.isArray(data[0])) throw new Error("bad gtx response");
+  const zh = (data[0] as unknown[])
+    .filter((seg): seg is [string, string] => Array.isArray(seg) && typeof seg[0] === "string")
+    .map((seg) => seg[0])
+    .join("")
+    .trim();
+  if (!zh) throw new Error("empty translation");
+  return zh.length > 160 ? `${zh.slice(0, 160).trimEnd()}…` : zh;
+}
+
+/**
+ * 仅对新增视频补中文简介：抓 description → 已是中文则截断直用，否则 gtx 翻译。
+ * 写 item.description（buildNote 落为 ## 简介，卡片展示，标题不动）。
+ */
+export async function enrichYoutubeDesc(
+  opts: YoutubeOptions,
+  items: CollectedItem[],
+  httpGet: (url: string) => Promise<string>,
+): Promise<void> {
+  const run = opts.run ?? defaultRun;
+  const withId = items.filter((it) => (it as CollectedItem & { videoId?: string }).videoId && !it.description);
+  if (withId.length === 0) return;
+  const urls = withId.map((it) => `https://www.youtube.com/watch?v=${(it as CollectedItem & { videoId?: string }).videoId as string}`);
+  const { stdout } = await run(opts.ytdlpPath, [...baseArgs(opts), "--print", "%(id)s\t%(description)j", ...urls]);
+  const descs = new Map<string, string>();
+  for (const line of stdout.split("\n")) {
+    const tab = line.indexOf("\t");
+    if (tab <= 0) continue;
+    try {
+      const d = JSON.parse(line.slice(tab + 1)) as unknown;
+      if (typeof d === "string" && d.trim()) descs.set(line.slice(0, tab), d);
+    } catch {
+      // 单条解析失败跳过
+    }
+  }
+  for (const it of withId) {
+    const vid = (it as CollectedItem & { videoId?: string }).videoId as string;
+    const raw = descs.get(vid);
+    if (!raw) continue;
+    const snippet = snippetForTranslate(raw);
+    if (!snippet) continue;
+    try {
+      it.description = isMostlyChinese(snippet)
+        ? (snippet.length > 160 ? `${snippet.slice(0, 160).trimEnd()}…` : snippet)
+        : await translateEnToZh(snippet, httpGet);
+    } catch {
+      // 翻译失败就留空，不阻塞
+    }
   }
 }
