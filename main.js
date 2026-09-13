@@ -377,6 +377,12 @@ var FavDashboardView = class extends import_obsidian2.ItemView {
       else new import_obsidian2.Notice("Fav Collector \u6587\u4EF6\u5939\u8FD8\u4E0D\u5B58\u5728\uFF0C\u5148\u70B9\u4E00\u6B21\u540C\u6B65");
     };
     const status = bar.createSpan({ cls: "fav-status" });
+    const oneBar = el.createDiv({ cls: "fav-filter" });
+    for (const p of PLATFORMS) {
+      const b = oneBar.createEl("button", { text: `\u540C\u6B65${PLATFORM_LABEL[p]}` });
+      b.disabled = this.plugin.syncing;
+      b.onclick = () => void this.plugin.syncPlatform(p).then(() => this.render());
+    }
     this.renderProgress(el);
     const last = this.plugin.settings.lastSync;
     for (const p of PLATFORMS) {
@@ -1225,6 +1231,9 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
     this.addRibbonIcon("refresh-cw", "\u540C\u6B65\u5168\u90E8\u6536\u85CF", () => void this.syncAll());
     this.addRibbonIcon("layout-dashboard", "\u6253\u5F00\u6536\u85CF\u603B\u89C8", () => void this.openDashboard());
     this.addCommand({ id: "sync-all", name: "\u540C\u6B65\u5168\u90E8\u6536\u85CF", callback: () => void this.syncAll() });
+    for (const p of PLATFORMS) {
+      this.addCommand({ id: `sync-${p}`, name: `\u53EA\u540C\u6B65${PLATFORM_LABEL[p]}`, callback: () => void this.syncPlatform(p) });
+    }
     this.addCommand({
       id: "open-dashboard",
       name: "\u6253\u5F00\u6536\u85CF\u603B\u89C8",

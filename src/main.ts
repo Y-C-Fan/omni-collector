@@ -87,6 +87,9 @@ export default class FavCollectorPlugin extends Plugin {
     this.addRibbonIcon("refresh-cw", "同步全部收藏", () => void this.syncAll());
     this.addRibbonIcon("layout-dashboard", "打开收藏总览", () => void this.openDashboard());
     this.addCommand({ id: "sync-all", name: "同步全部收藏", callback: () => void this.syncAll() });
+    for (const p of PLATFORMS) {
+      this.addCommand({ id: `sync-${p}`, name: `只同步${PLATFORM_LABEL[p]}`, callback: () => void this.syncPlatform(p) });
+    }
     this.addCommand({
       id: "open-dashboard",
       name: "打开收藏总览",

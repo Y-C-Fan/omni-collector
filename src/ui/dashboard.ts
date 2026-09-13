@@ -114,6 +114,14 @@ export class FavDashboardView extends ItemView {
     };
     const status = bar.createSpan({ cls: "fav-status" });
 
+    // 单平台同步（只更一家，不用全量跑）
+    const oneBar = el.createDiv({ cls: "fav-filter" });
+    for (const p of PLATFORMS) {
+      const b = oneBar.createEl("button", { text: `同步${PLATFORM_LABEL[p]}` });
+      b.disabled = this.plugin.syncing;
+      b.onclick = () => void this.plugin.syncPlatform(p).then(() => this.render());
+    }
+
     // 同步进度（实时）
     this.renderProgress(el);
 
