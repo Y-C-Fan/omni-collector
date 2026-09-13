@@ -48,3 +48,54 @@ describe("xiaoyuzhou", () => {
     expect(n).toBe(2);
   });
 });
+
+
+describe("xiaoyuzhou history", () => {
+  it("collectXiaoyuzhouHistory unwraps episode entries + marks unfinished", async () => {
+    const { collectXiaoyuzhouHistory: collect } = await import("../src/sync/xiaoyuzhou.js");
+    const data = [
+      {
+        episode: {
+          eid: "h1",
+          title: "没听完那期",
+          podcast: { pid: "p9", title: "堆积播客" },
+          shownotes: "<p>简介</p>",
+          duration: 3600,
+          pubDate: "2026-09-12T12:00:00.000Z",
+          isFinished: false,
+          isPlayed: true,
+        },
+      },
+      {
+        episode: {
+          eid: "h2",
+          title: "听完那期",
+          podcast: { pid: "p9", title: "堆积播客" },
+          shownotes: "",
+          duration: 1800,
+          pubDate: "2026-09-11T12:00:00.000Z",
+          isFinished: true,
+          isPlayed: true,
+        },
+      },
+    ];
+    const seen: string[] = [];
+    const post = async (url: string) => {
+      seen.push(url);
+      return { data: { data }, headers: {}, status: 200 };
+    };
+    const items = await collect({ post }, { accessToken: "tok" });
+    expect(seen[0]).toContain("/v1/episode-played/list-history");
+    expect(items).toHaveLength(2);
+    expect(items[0].folder).toBe("堆积播客");
+    expect(items[0].unfinished).toBe(true);
+    expect(items[1].unfinished).toBeUndefined();
+    expect(items[0].url).toBe("https://www.xiaoyuzhoufm.com/episode/h1");
+  });
+
+  it("collectXiaoyuzhouHistory requires token", async () => {
+    const { collectXiaoyuzhouHistory: collect } = await import("../src/sync/xiaoyuzhou.js");
+    const post = async () => ({ data: {}, headers: {}, status: 200 });
+    await expect(collect({ post }, { accessToken: "  " })).rejects.toThrowError(/未登录/);
+  });
+});

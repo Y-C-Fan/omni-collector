@@ -28,6 +28,7 @@ export function buildNote(item: CollectedItem): string {
     `url: ${yamlString(item.url)}`,
     ...(item.author ? [`author: ${yamlString(item.author)}`] : []),
     ...(item.publishedAt ? [`published_at: ${yamlString(item.publishedAt)}`] : []),
+    ...(item.unfinished ? [`unfinished: true`] : []),
     ...(item.folder ? [`folder: ${yamlString(item.folder)}`] : []),
     ...(item.coverUrl ? [`cover: ${yamlString(item.coverUrl)}`] : []),
     "---",
@@ -81,6 +82,7 @@ export interface CardData {
   url: string;
   author?: string;
   publishedAt?: string;
+  unfinished?: boolean;
   folder?: string;
   cover?: string;
   description?: string;
@@ -116,6 +118,7 @@ export function cardFromNote(path: string, md: string, ctime = 0): CardData | nu
   const dateM = fileName.match(/^(\d{4}-\d{2}-\d{2})_/);
   const publishedAt = fm.published_at || undefined;
   const sortKey = publishedAt ?? dateM?.[1] ?? "";
+  const unfinished = fm.unfinished === "true";
   return {
     path,
     platform: fm.platform as Platform,
@@ -123,6 +126,7 @@ export function cardFromNote(path: string, md: string, ctime = 0): CardData | nu
     url: fm.url,
     author: fm.author,
     publishedAt,
+    unfinished,
     folder,
     cover,
     description,

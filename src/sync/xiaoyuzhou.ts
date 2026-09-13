@@ -70,25 +70,19 @@ function stripHtml(html: string): string {
 }
 
 export function findEpisodeArrays(obj: unknown): Array<Record<string, unknown>> {
-  // 防御性解析：收藏接口返回形态可能变化，找"长得像单集列表"的数组
+  // 聚合所有单集形态：裸 {eid} 数组，或 { episode: {...} } 包裹数组（如收听历史）
   if (Array.isArray(obj)) {
-    if (obj.length > 0 && typeof obj[0] === "object" && obj[0] !== null && ("eid" in obj[0] || "episodeId" in obj[0])) {
-      return obj as Array<Record<string, unknown>>;
-    }
-    for (const v of obj) {
-      const hit = findEpisodeArrays(v);
-      if (hit.length > 0) return hit;
-    }
-    return [];
+    const out: Array<Record<string, unknown>> = [];
+    for (const v of obj) out.push(...findEpisodeArrays(v));
+    return out;
   }
   if (obj && typeof obj === "object") {
     // 包装形态 { episode: {...} } 也算
     const rec = obj as Record<string, unknown>;
     if (typeof rec.eid === "string") return [rec];
-    for (const v of Object.values(rec)) {
-      const hit = findEpisodeArrays(v);
-      if (hit.length > 0) return hit;
-    }
+    const out: Array<Record<string, unknown>> = [];
+    for (const v of Object.values(rec)) out.push(...findEpisodeArrays(v));
+    return out;
   }
   return [];
 }
@@ -101,11 +95,13 @@ export function episodeToItem(raw: Record<string, unknown>): CollectedItem | nul
   const it = makeItem("xiaoyuzhou", eid, `https://www.xiaoyuzhoufm.com/episode/${eid}`, title);
   const podTitle = (podcast.title as string) || undefined;
   it.author = podTitle;
-  it.folder = podTitle; // 天然分类：按播客节目归档
+  it.folder = podTitle; // 自然归类：按播客节目归档
   it.description = stripHtml((raw.shownotes ?? raw.description) as string).slice(0, 200) || undefined;
   const image = (raw.image ?? {}) as Record<string, unknown>;
   it.coverUrl = (image.picUrl as string) || undefined;
   it.publishedAt = toDateOnly(raw.pubDate ?? raw.publishDate ?? raw.createdAt);
+  // 收听历史：没听完的标出来（用户堆了很多没听的）
+  if (raw.isFinished === false) it.unfinished = true;
   const duration = raw.duration as number | undefined;
   if (typeof duration === "number" && duration > 0) {
     const m = Math.floor(duration / 60000) || Math.floor(duration / 60);
@@ -125,8 +121,8 @@ export async function collectXiaoyuzhou(
   let token = creds.accessToken.trim();
   const deviceId = creds.deviceId?.trim() || undefined;
 
-  const call = async (payload: Record<string, unknown>) => {
-    const r = await http.post(`${API}/v1/favorite/list`, payload, appHeaders(token, deviceId));
+  const call = async (endpoint: string, payload: Record<string, unknown>) => {
+    const r = await http.post(`${API}${endpoint}`, payload, appHeaders(token, deviceId));
     if (r.status === 401 && creds.refreshToken?.trim()) {
       // 自愈刷新（r266 同款）
       const rr = await http.post(
@@ -144,7 +140,7 @@ export async function collectXiaoyuzhou(
           refreshToken: typeof newRefresh === "string" ? newRefresh : creds.refreshToken,
           deviceId,
         });
-        return http.post(`${API}/v1/favorite/list`, payload, appHeaders(token, deviceId));
+        return http.post(`${API}${endpoint}`, payload, appHeaders(token, deviceId));
       }
     }
     return r;
@@ -156,7 +152,7 @@ export async function collectXiaoyuzhou(
   for (let page = 0; page < 20; page += 1) {
     let r: { data: unknown; status: number };
     try {
-      r = await call(loadMoreKey ? { loadMoreKey } : {});
+      r = await call("/v1/favorite/list", loadMoreKey ? { loadMoreKey } : {});
     } catch (e) {
       throw new XiaoyuzhouError(`小宇宙收藏抓取失败: ${(e as Error).message.slice(0, 150)}`);
     }
@@ -181,6 +177,70 @@ export async function collectXiaoyuzhou(
     if (!next || fresh === 0) break;
     loadMoreKey = next;
     await sleep(500);
+  }
+  return items;
+}
+
+/**
+ * 收听历史（r266 同款端点 POST /v1/episode-played/list-history，实测可用）。
+ * 用户堆了很多没听完的：按播客节目归档，isFinished=false 的标未听完。
+ * 历史条目可能是 { episode: {...} } 包裹，findEpisodeArrays 会钻进去。
+ */
+export async function collectXiaoyuzhouHistory(
+  http: XyzHttp,
+  creds: XyzCreds,
+  onCreds?: (next: XyzCreds) => void,
+): Promise<CollectedItem[]> {
+  if (!creds.accessToken.trim()) {
+    throw new XiaoyuzhouError("小宇宙未登录：设置页填 access_token 和 refresh_token（网页扫码一次即可）");
+  }
+  let token = creds.accessToken.trim();
+  const deviceId = creds.deviceId?.trim() || undefined;
+  const postHistory = async () => {
+    const r = await http.post(`${API}/v1/episode-played/list-history`, {}, appHeaders(token, deviceId));
+    if (r.status === 401 && creds.refreshToken?.trim()) {
+      const rr = await http.post(
+        `${API}/app_auth_tokens.refresh`,
+        {},
+        { ...appHeaders(undefined, deviceId), "x-jike-refresh-token": creds.refreshToken.trim() },
+      );
+      const newAccess = rr.headers["x-jike-access-token"] ?? (rr.data as Record<string, unknown>)["x-jike-access-token"];
+      if (typeof newAccess === "string" && newAccess) {
+        token = newAccess;
+        const newRefresh =
+          rr.headers["x-jike-refresh-token"] ?? (rr.data as Record<string, unknown>)["x-jike-refresh-token"];
+        onCreds?.({
+          accessToken: token,
+          refreshToken: typeof newRefresh === "string" ? newRefresh : creds.refreshToken,
+          deviceId,
+        });
+        return http.post(`${API}/v1/episode-played/list-history`, {}, appHeaders(token, deviceId));
+      }
+    }
+    return r;
+  };
+  let r: { data: unknown; status: number };
+  try {
+    r = await postHistory();
+  } catch (e) {
+    throw new XiaoyuzhouError(`小宇宙历史抓取失败: ${(e as Error).message.slice(0, 150)}`);
+  }
+  if (r.status === 401) {
+    throw new XiaoyuzhouError("小宇宙登录过期：网页版重登后更新设置页 token");
+  }
+  if (r.status !== 200) {
+    throw new XiaoyuzhouError(`小宇宙接口返回 HTTP ${r.status}`);
+  }
+  const body = (r.data ?? {}) as Record<string, unknown>;
+  const raws = findEpisodeArrays(body.data ?? body);
+  const items: CollectedItem[] = [];
+  const seen = new Set<string>();
+  for (const raw of raws) {
+    const it = episodeToItem(raw);
+    if (it && !seen.has(it.nativeId)) {
+      seen.add(it.nativeId);
+      items.push(it);
+    }
   }
   return items;
 }

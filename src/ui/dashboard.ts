@@ -191,7 +191,7 @@ export class FavDashboardView extends ItemView {
         const meta = card.createDiv({ cls: "fav-meta" });
         const badge = meta.createSpan({ cls: `fav-badge ${c.platform}`, text: PLATFORM_LABEL[c.platform] });
         void badge;
-        meta.appendText(`${c.dateLabel}${c.author ? ` · ${c.author}` : ""}`);
+        meta.appendText(`${c.dateLabel}${c.author ? ` · ${c.author}` : ""}${c.unfinished ? " · 未听完" : ""}`);
         if (c.description) card.createDiv({ cls: "fav-desc", text: c.description });
       }
       if (rendered >= 500) break;

@@ -30,6 +30,8 @@ export interface CollectedItem {
   watchLater?: boolean;
   /** YYYY-MM-DD（有才排序）。 */
   publishedAt?: string;
+  /** 小宇宙等：未听完（收听历史 isFinished=false）。 */
+  unfinished?: boolean;
 }
 
 export interface PlatformResult {

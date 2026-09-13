@@ -4,7 +4,7 @@ import { collectGithub } from "./github.js";
 import { collectYoutube, enrichYoutubeDates } from "./youtube.js";
 import { collectZhihu } from "./zhihu.js";
 import { collectX } from "./x.js";
-import { collectXiaoyuzhou, type XyzCreds, type XyzHttp } from "./xiaoyuzhou.js";
+import { collectXiaoyuzhouHistory, type XyzCreds, type XyzHttp } from "./xiaoyuzhou.js";
 import { buildNote, notePathFor } from "../markdown/writer.js";
 import type { CollectedItem, HttpGet, Platform, PlatformResult } from "./model.js";
 import { PLATFORMS } from "./model.js";
@@ -59,7 +59,8 @@ export async function syncPlatform(
         items = await collectGithub();
         break;
       case "xiaoyuzhou":
-        items = await collectXiaoyuzhou(
+        // 主入口：收听历史（按播客归档+标未听完）；收藏接口服务端异常，暂不走
+        items = await collectXiaoyuzhouHistory(
           { post },
           {
             accessToken: settings.xyzAccessToken,

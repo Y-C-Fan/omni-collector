@@ -58,7 +58,7 @@ export class FavSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("小宇宙 access_token")
-      .setDesc("短信登录一次即可（仓库 scripts/xyz_login.py），refresh_token 一起粘更稳")
+      .setDesc("网页版扫码登录后从请求头拷（refresh_token 一起粘，过期自动续）;同步收听历史，按播客归档")
       .addText((t) =>
         t.setValue(s.xyzAccessToken).onChange(async (v) => {
           s.xyzAccessToken = v.trim();

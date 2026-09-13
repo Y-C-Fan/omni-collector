@@ -80,7 +80,7 @@ var FavSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian.Setting(containerEl).setName("\u5C0F\u5B87\u5B99 access_token").setDesc("\u77ED\u4FE1\u767B\u5F55\u4E00\u6B21\u5373\u53EF\uFF08\u4ED3\u5E93 scripts/xyz_login.py\uFF09\uFF0Crefresh_token \u4E00\u8D77\u7C98\u66F4\u7A33").addText(
+    new import_obsidian.Setting(containerEl).setName("\u5C0F\u5B87\u5B99 access_token").setDesc("\u7F51\u9875\u7248\u626B\u7801\u767B\u5F55\u540E\u4ECE\u8BF7\u6C42\u5934\u62F7\uFF08refresh_token \u4E00\u8D77\u7C98\uFF0C\u8FC7\u671F\u81EA\u52A8\u7EED\uFF09;\u540C\u6B65\u6536\u542C\u5386\u53F2\uFF0C\u6309\u64AD\u5BA2\u5F52\u6863").addText(
       (t) => t.setValue(s.xyzAccessToken).onChange(async (v) => {
         s.xyzAccessToken = v.trim();
         await this.plugin.saveSettings();
@@ -175,6 +175,7 @@ function buildNote(item) {
     `url: ${yamlString(item.url)}`,
     ...item.author ? [`author: ${yamlString(item.author)}`] : [],
     ...item.publishedAt ? [`published_at: ${yamlString(item.publishedAt)}`] : [],
+    ...item.unfinished ? [`unfinished: true`] : [],
     ...item.folder ? [`folder: ${yamlString(item.folder)}`] : [],
     ...item.coverUrl ? [`cover: ${yamlString(item.coverUrl)}`] : [],
     "---",
@@ -233,6 +234,7 @@ function cardFromNote(path, md, ctime = 0) {
   const dateM = fileName.match(/^(\d{4}-\d{2}-\d{2})_/);
   const publishedAt = fm.published_at || void 0;
   const sortKey = publishedAt ?? dateM?.[1] ?? "";
+  const unfinished = fm.unfinished === "true";
   return {
     path,
     platform: fm.platform,
@@ -240,6 +242,7 @@ function cardFromNote(path, md, ctime = 0) {
     url: fm.url,
     author: fm.author,
     publishedAt,
+    unfinished,
     folder,
     cover,
     description,
@@ -437,7 +440,7 @@ var FavDashboardView = class extends import_obsidian2.ItemView {
         };
         const meta = card.createDiv({ cls: "fav-meta" });
         const badge = meta.createSpan({ cls: `fav-badge ${c.platform}`, text: PLATFORM_LABEL[c.platform] });
-        meta.appendText(`${c.dateLabel}${c.author ? ` \xB7 ${c.author}` : ""}`);
+        meta.appendText(`${c.dateLabel}${c.author ? ` \xB7 ${c.author}` : ""}${c.unfinished ? " \xB7 \u672A\u542C\u5B8C" : ""}`);
         if (c.description) card.createDiv({ cls: "fav-desc", text: c.description });
       }
       if (rendered >= 500) break;
@@ -925,22 +928,16 @@ function stripHtml(html) {
 }
 function findEpisodeArrays(obj) {
   if (Array.isArray(obj)) {
-    if (obj.length > 0 && typeof obj[0] === "object" && obj[0] !== null && ("eid" in obj[0] || "episodeId" in obj[0])) {
-      return obj;
-    }
-    for (const v of obj) {
-      const hit = findEpisodeArrays(v);
-      if (hit.length > 0) return hit;
-    }
-    return [];
+    const out = [];
+    for (const v of obj) out.push(...findEpisodeArrays(v));
+    return out;
   }
   if (obj && typeof obj === "object") {
     const rec = obj;
     if (typeof rec.eid === "string") return [rec];
-    for (const v of Object.values(rec)) {
-      const hit = findEpisodeArrays(v);
-      if (hit.length > 0) return hit;
-    }
+    const out = [];
+    for (const v of Object.values(rec)) out.push(...findEpisodeArrays(v));
+    return out;
   }
   return [];
 }
@@ -957,6 +954,7 @@ function episodeToItem(raw) {
   const image = raw.image ?? {};
   it.coverUrl = image.picUrl || void 0;
   it.publishedAt = toDateOnly(raw.pubDate ?? raw.publishDate ?? raw.createdAt);
+  if (raw.isFinished === false) it.unfinished = true;
   const duration = raw.duration;
   if (typeof duration === "number" && duration > 0) {
     const m = Math.floor(duration / 6e4) || Math.floor(duration / 60);
@@ -964,15 +962,15 @@ function episodeToItem(raw) {
   }
   return it;
 }
-async function collectXiaoyuzhou(http, creds, onCreds) {
+async function collectXiaoyuzhouHistory(http, creds, onCreds) {
   if (!creds.accessToken.trim()) {
-    throw new XiaoyuzhouError("\u5C0F\u5B87\u5B99\u672A\u767B\u5F55\uFF1A\u8BBE\u7F6E\u9875\u586B access_token\uFF08\u77ED\u4FE1\u767B\u5F55\u4E00\u6B21\u5373\u53EF\uFF0C\u89C1\u4ED3\u5E93 scripts/xyz_login.py\uFF09");
+    throw new XiaoyuzhouError("\u5C0F\u5B87\u5B99\u672A\u767B\u5F55\uFF1A\u8BBE\u7F6E\u9875\u586B access_token \u548C refresh_token\uFF08\u7F51\u9875\u626B\u7801\u4E00\u6B21\u5373\u53EF\uFF09");
   }
   let token = creds.accessToken.trim();
   const deviceId = creds.deviceId?.trim() || void 0;
-  const call = async (payload) => {
-    const r = await http.post(`${API2}/v1/favorite/list`, payload, appHeaders(token, deviceId));
-    if (r.status === 401 && creds.refreshToken?.trim()) {
+  const postHistory = async () => {
+    const r2 = await http.post(`${API2}/v1/episode-played/list-history`, {}, appHeaders(token, deviceId));
+    if (r2.status === 401 && creds.refreshToken?.trim()) {
       const rr = await http.post(
         `${API2}/app_auth_tokens.refresh`,
         {},
@@ -987,42 +985,33 @@ async function collectXiaoyuzhou(http, creds, onCreds) {
           refreshToken: typeof newRefresh === "string" ? newRefresh : creds.refreshToken,
           deviceId
         });
-        return http.post(`${API2}/v1/favorite/list`, payload, appHeaders(token, deviceId));
+        return http.post(`${API2}/v1/episode-played/list-history`, {}, appHeaders(token, deviceId));
       }
     }
-    return r;
+    return r2;
   };
+  let r;
+  try {
+    r = await postHistory();
+  } catch (e) {
+    throw new XiaoyuzhouError(`\u5C0F\u5B87\u5B99\u5386\u53F2\u6293\u53D6\u5931\u8D25: ${e.message.slice(0, 150)}`);
+  }
+  if (r.status === 401) {
+    throw new XiaoyuzhouError("\u5C0F\u5B87\u5B99\u767B\u5F55\u8FC7\u671F\uFF1A\u7F51\u9875\u7248\u91CD\u767B\u540E\u66F4\u65B0\u8BBE\u7F6E\u9875 token");
+  }
+  if (r.status !== 200) {
+    throw new XiaoyuzhouError(`\u5C0F\u5B87\u5B99\u63A5\u53E3\u8FD4\u56DE HTTP ${r.status}`);
+  }
+  const body = r.data ?? {};
+  const raws = findEpisodeArrays(body.data ?? body);
   const items = [];
   const seen = /* @__PURE__ */ new Set();
-  let loadMoreKey;
-  for (let page = 0; page < 20; page += 1) {
-    let r;
-    try {
-      r = await call(loadMoreKey ? { loadMoreKey } : {});
-    } catch (e) {
-      throw new XiaoyuzhouError(`\u5C0F\u5B87\u5B99\u6536\u85CF\u6293\u53D6\u5931\u8D25: ${e.message.slice(0, 150)}`);
+  for (const raw of raws) {
+    const it = episodeToItem(raw);
+    if (it && !seen.has(it.nativeId)) {
+      seen.add(it.nativeId);
+      items.push(it);
     }
-    if (r.status === 401) {
-      throw new XiaoyuzhouError("\u5C0F\u5B87\u5B99\u767B\u5F55\u8FC7\u671F\uFF1A\u91CD\u767B\u540E\u66F4\u65B0\u8BBE\u7F6E\u9875 token\uFF08scripts/xyz_login.py\uFF09");
-    }
-    if (r.status !== 200) {
-      throw new XiaoyuzhouError(`\u5C0F\u5B87\u5B99\u63A5\u53E3\u8FD4\u56DE HTTP ${r.status}`);
-    }
-    const body = r.data ?? {};
-    const raws = findEpisodeArrays(body.data ?? body);
-    let fresh = 0;
-    for (const raw of raws) {
-      const it = episodeToItem(raw);
-      if (it && !seen.has(it.nativeId)) {
-        seen.add(it.nativeId);
-        items.push(it);
-        fresh += 1;
-      }
-    }
-    const next = body.loadMoreKey ?? body.nextLoadMoreKey;
-    if (!next || fresh === 0) break;
-    loadMoreKey = next;
-    await sleep(500);
   }
   return items;
 }
@@ -1049,7 +1038,7 @@ async function syncPlatform(platform, settings, deps) {
         items = await collectGithub();
         break;
       case "xiaoyuzhou":
-        items = await collectXiaoyuzhou(
+        items = await collectXiaoyuzhouHistory(
           { post },
           {
             accessToken: settings.xyzAccessToken,
