@@ -1,7 +1,7 @@
 {
   "id": "fav-collector-local",
   "name": "Fav Collector",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "minAppVersion": "1.5.0",
   "description": "One-click favorites sync (Bilibili/YouTube/Zhihu/X) with a card dashboard. No engine, no database.",
   "author": "Y-C-Fan",

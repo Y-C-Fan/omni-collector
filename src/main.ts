@@ -6,7 +6,7 @@ import { Notice, Plugin, WorkspaceLeaf, requestUrl } from "obsidian";
 import { DEFAULT_SETTINGS, type FavSettings } from "./settings.js";import { FavSettingTab } from "./settings-tab.js";
 import { FavDashboardView, VIEW_TYPE_FAV_DASHBOARD } from "./ui/dashboard.js";
 import { parseFrontmatter } from "./markdown/writer.js";
-import { syncPlatform, writeNewItems, relocateItems } from "./sync/runner.js";
+import { syncPlatform, writeNewItems, relocateItems, refreshYoutubeOrder } from "./sync/runner.js";
 import { enrichYoutubeDates, enrichYoutubeDesc } from "./sync/youtube.js";
 import { PLATFORMS, PLATFORM_LABEL } from "./sync/model.js";
 import type { CollectedItem, HttpGet, Platform, PlatformResult } from "./sync/model.js";
@@ -207,6 +207,10 @@ export default class FavCollectorPlugin extends Plugin {
         ? await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result])
         : { moved: 0, movedPaths: [] as string[] };
       const report = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
+      if (result.ok && platform === "youtube") {
+        this.setStep("YouTube 队列位置刷新（稍后再看是栈，新加的顶上来）…");
+        await refreshYoutubeOrder(this.fsAdapter(), urlToPath, result.items);
+      }
       this.settings.lastSync[platform] = {
         at: new Date().toISOString(),
         ok: result.ok,
@@ -233,6 +237,16 @@ export default class FavCollectorPlugin extends Plugin {
       exists: (p: string) => va.adapter.exists(p),
       mkdir: (p: string) => va.createFolder(p).then(() => undefined).catch(() => undefined),
       write: (p: string, c: string) => va.create(p, c).then(() => undefined),
+      read: async (p: string) => {
+        const f = va.getFileByPath(p);
+        if (!f) throw new Error(`找不到文件：${p}`);
+        return va.read(f);
+      },
+      overwrite: async (p: string, c: string) => {
+        const f = va.getFileByPath(p);
+        if (!f) throw new Error(`找不到文件：${p}`);
+        await va.modify(f, c);
+      },
       rename: async (oldPath: string, newPath: string) => {
         const f = va.getFileByPath(oldPath);
         if (!f) throw new Error(`找不到文件：${oldPath}`);
@@ -297,6 +311,10 @@ export default class FavCollectorPlugin extends Plugin {
             const mv = await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]);
             totalMoved += mv.moved;
             const rep = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
+            if (p === "youtube") {
+              this.setStep("YouTube 队列位置刷新（稍后再看是栈，新加的顶上来）…");
+              await refreshYoutubeOrder(this.fsAdapter(), urlToPath, result.items);
+            }
             added = rep.added;
             totalAdded += added;
           } catch (e) {

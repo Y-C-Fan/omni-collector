@@ -15,6 +15,8 @@ describe("runner dedup", () => {
         store.set(p, c);
       },
       rename: async () => {},
+      read: async () => "",
+      overwrite: async () => {},
     };
     const fresh = makeItem("bilibili", "new1", "https://u/new1", "新标题");
     const dupe = makeItem("bilibili", "old", "https://u/old", "旧标题");
@@ -41,6 +43,10 @@ describe("runner relocate", () => {
         store.set(n, store.get(o) as string);
         store.delete(o);
       },
+      read: async (p: string) => store.get(p) as string,
+      overwrite: async (p: string, c: string) => {
+        store.set(p, c);
+      },
     };
     const it = { ...makeItem("youtube", "LL_abc", "https://www.youtube.com/watch?v=abc", "Hello"), folder: "喜欢" };
     const results: PlatformResult[] = [{ platform: "youtube", ok: true, items: [it] }];
@@ -65,6 +71,10 @@ describe("runner relocate", () => {
       rename: async (o: string, n: string) => {
         store.set(n, store.get(o) as string);
         store.delete(o);
+      },
+      read: async (p: string) => store.get(p) as string,
+      overwrite: async (p: string, c: string) => {
+        store.set(p, c);
       },
     };
     const a = { ...makeItem("youtube", "LL_a", "https://u/a", "A"), folder: "喜欢" };

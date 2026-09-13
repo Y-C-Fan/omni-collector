@@ -175,6 +175,7 @@ function buildNote(item) {
     `url: ${yamlString(item.url)}`,
     ...item.author ? [`author: ${yamlString(item.author)}`] : [],
     ...item.publishedAt ? [`published_at: ${yamlString(item.publishedAt)}`] : [],
+    ...item.playlistIndex !== void 0 ? [`playlist_index: ${item.playlistIndex}`] : [],
     ...item.unfinished ? [`unfinished: true`] : [],
     ...item.folder ? [`folder: ${yamlString(item.folder)}`] : [],
     ...item.coverUrl ? [`cover: ${yamlString(item.coverUrl)}`] : [],
@@ -235,6 +236,9 @@ function cardFromNote(path, md, ctime = 0) {
   const publishedAt = fm.published_at || void 0;
   const sortKey = publishedAt ?? dateM?.[1] ?? "";
   const unfinished = fm.unfinished === "true";
+  const qi = fm.playlist_index !== void 0 && fm.playlist_index !== "" ? Number(fm.playlist_index) : void 0;
+  const queueIndex = qi !== void 0 && Number.isFinite(qi) ? qi : void 0;
+  const dateLabel = queueIndex !== void 0 ? `#${queueIndex + 1}${publishedAt ? ` \xB7 ${publishedAt}` : ""}` : publishedAt ?? dateM?.[1] ?? "\u672A\u77E5\u65F6\u95F4";
   return {
     path,
     platform: fm.platform,
@@ -247,7 +251,8 @@ function cardFromNote(path, md, ctime = 0) {
     cover,
     description,
     sortKey,
-    dateLabel: publishedAt ?? dateM?.[1] ?? "\u672A\u77E5\u65F6\u95F4",
+    dateLabel,
+    queueIndex,
     ctime
   };
 }
@@ -466,7 +471,14 @@ var FavDashboardView = class extends import_obsidian2.ItemView {
         skipped += 1;
       }
     }
-    out.sort((a, b) => b.sortKey.localeCompare(a.sortKey) || b.ctime - a.ctime || a.path.localeCompare(b.path));
+    out.sort((a, b) => {
+      const aq = a.queueIndex;
+      const bq = b.queueIndex;
+      if (aq !== void 0 && bq !== void 0 && a.platform === b.platform) return aq - bq;
+      if (aq !== void 0 && bq === void 0) return -1;
+      if (aq === void 0 && bq !== void 0) return 1;
+      return b.sortKey.localeCompare(a.sortKey) || b.ctime - a.ctime || a.path.localeCompare(b.path);
+    });
     return { cards: out, scanned: files.length, skipped };
   }
 };
@@ -630,11 +642,14 @@ function baseArgs(opts) {
 }
 function parseFlatList(stdout, listId) {
   const items = [];
+  let idx = 0;
   for (const line of stdout.split("\n")) {
     const m = line.match(/^(\S+)\t(.*)$/);
     if (!m) continue;
     const it = makeItem("youtube", `${listId}_${m[1]}`, `https://www.youtube.com/watch?v=${m[1]}`, (m[2] || "(\u65E0\u6807\u9898)").slice(0, 150));
     it.watchLater = listId === "WL";
+    it.playlistIndex = idx;
+    idx += 1;
     if (listId === "LL") it.folder = "\u559C\u6B22";
     it.coverUrl = `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg`;
     it.videoId = m[1];
@@ -1101,6 +1116,44 @@ async function relocateItems(fs, favIdToPath, urlToPath, results) {
   }
   return { moved: movedPaths.length, movedPaths };
 }
+async function refreshYoutubeOrder(fs, urlToPath, items) {
+  let updated = 0;
+  for (const it of items) {
+    if (it.platform !== "youtube" || it.playlistIndex === void 0) continue;
+    const p = urlToPath.get(it.url);
+    if (!p) continue;
+    try {
+      const md = await fs.read(p);
+      const nl = md.includes("\r\n") ? "\r\n" : "\n";
+      const lines = md.split(/\r?\n/);
+      const fmEnd = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+      if (fmEnd <= 0) continue;
+      let touched = false;
+      for (let i = 1; i < fmEnd; i += 1) {
+        if (/^playlist_index:\s*\d+/.test(lines[i])) {
+          const next = `playlist_index: ${it.playlistIndex}`;
+          if (lines[i] !== next) {
+            lines[i] = next;
+            touched = true;
+          }
+          break;
+        }
+      }
+      if (!touched) {
+        const urlIdx = lines.findIndex((l, i) => i < fmEnd && /^url:\s*/.test(l));
+        if (urlIdx < 0) continue;
+        lines.splice(urlIdx + 1, 0, `playlist_index: ${it.playlistIndex}`);
+        touched = true;
+      }
+      if (touched) {
+        await fs.overwrite(p, lines.join(nl));
+        updated += 1;
+      }
+    } catch {
+    }
+  }
+  return { updated };
+}
 
 // src/main.ts
 var FavCollectorPlugin = class extends import_obsidian3.Plugin {
@@ -1262,6 +1315,10 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       if (result.ok) this.setStep(`${PLATFORM_LABEL[platform]}\u6293\u5230 ${result.items.length} \u6761 \u2192 \u53BB\u91CD/\u5F52\u6863/\u843D\u76D8\u2026`);
       const moved = result.ok ? await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]) : { moved: 0, movedPaths: [] };
       const report = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
+      if (result.ok && platform === "youtube") {
+        this.setStep("YouTube \u961F\u5217\u4F4D\u7F6E\u5237\u65B0\uFF08\u7A0D\u540E\u518D\u770B\u662F\u6808\uFF0C\u65B0\u52A0\u7684\u9876\u4E0A\u6765\uFF09\u2026");
+        await refreshYoutubeOrder(this.fsAdapter(), urlToPath, result.items);
+      }
       this.settings.lastSync[platform] = {
         at: (/* @__PURE__ */ new Date()).toISOString(),
         ok: result.ok,
@@ -1287,6 +1344,16 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       exists: (p) => va.adapter.exists(p),
       mkdir: (p) => va.createFolder(p).then(() => void 0).catch(() => void 0),
       write: (p, c) => va.create(p, c).then(() => void 0),
+      read: async (p) => {
+        const f = va.getFileByPath(p);
+        if (!f) throw new Error(`\u627E\u4E0D\u5230\u6587\u4EF6\uFF1A${p}`);
+        return va.read(f);
+      },
+      overwrite: async (p, c) => {
+        const f = va.getFileByPath(p);
+        if (!f) throw new Error(`\u627E\u4E0D\u5230\u6587\u4EF6\uFF1A${p}`);
+        await va.modify(f, c);
+      },
       rename: async (oldPath, newPath) => {
         const f = va.getFileByPath(oldPath);
         if (!f) throw new Error(`\u627E\u4E0D\u5230\u6587\u4EF6\uFF1A${oldPath}`);
@@ -1345,6 +1412,10 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
             const mv = await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]);
             totalMoved += mv.moved;
             const rep = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
+            if (p === "youtube") {
+              this.setStep("YouTube \u961F\u5217\u4F4D\u7F6E\u5237\u65B0\uFF08\u7A0D\u540E\u518D\u770B\u662F\u6808\uFF0C\u65B0\u52A0\u7684\u9876\u4E0A\u6765\uFF09\u2026");
+              await refreshYoutubeOrder(this.fsAdapter(), urlToPath, result.items);
+            }
             added = rep.added;
             totalAdded += added;
           } catch (e) {

@@ -81,3 +81,56 @@ describe("youtube desc", () => {
     expect(items[0].description).toBe("这是一段中文视频简介。");
   });
 });
+
+
+describe("youtube queue", () => {
+  it("parseFlatList records playlist position", async () => {
+    const { parseFlatList: pfl } = await import("../src/sync/youtube.js");
+    const items = pfl("a\tA\nbadline\nb\tB\n", "WL");
+    expect(items.map((i) => i.playlistIndex)).toEqual([0, 1]);
+  });
+
+  it("refreshYoutubeOrder rewrites only the index line", async () => {
+    const { refreshYoutubeOrder: refresh } = await import("../src/sync/runner.js");
+    const { makeItem } = await import("../src/sync/model.js");
+    const store = new Map<string, string>([
+      ["Fav Collector/youtube/A.md", '---\nplatform: "youtube"\nurl: "https://www.youtube.com/watch?v=a"\nplaylist_index: 9\n---\n# A\n\n## 我的笔记\n\n私密\n'],
+      ["Fav Collector/youtube/B.md", '---\nplatform: "youtube"\nurl: "https://www.youtube.com/watch?v=b"\n---\n# B\n'],
+    ]);
+    const fs = {
+      exists: async (p: string) => store.has(p),
+      mkdir: async () => {},
+      write: async (p: string, c: string) => {
+        store.set(p, c);
+      },
+      read: async (p: string) => store.get(p) as string,
+      overwrite: async (p: string, c: string) => {
+        store.set(p, c);
+      },
+      rename: async () => {},
+    };
+    const a = { ...makeItem("youtube", "WL_a", "https://www.youtube.com/watch?v=a", "A"), playlistIndex: 0 };
+    const b = { ...makeItem("youtube", "WL_b", "https://www.youtube.com/watch?v=b", "B"), playlistIndex: 1 };
+    const urlToPath = new Map([
+      ["https://www.youtube.com/watch?v=a", "Fav Collector/youtube/A.md"],
+      ["https://www.youtube.com/watch?v=b", "Fav Collector/youtube/B.md"],
+    ]);
+    const rep = await refresh(fs, urlToPath, [a, b]);
+    expect(rep.updated).toBe(2);
+    expect(store.get("Fav Collector/youtube/A.md")).toContain("playlist_index: 0");
+    expect(store.get("Fav Collector/youtube/A.md")).toContain("私密");
+    expect(store.get("Fav Collector/youtube/B.md")).toContain('url: "https://www.youtube.com/watch?v=b"\nplaylist_index: 1');
+  });
+
+  it("cardFromNote shows queue number instead of unknown time", async () => {
+    const { cardFromNote: cfn } = await import("../src/markdown/writer.js");
+    const card = cfn(
+      "Fav Collector/youtube/T.md",
+      '---\nplatform: "youtube"\nurl: "https://u"\nplaylist_index: 2\npublished_at: "2026-01-01"\n---\n# T\n',
+    );
+    expect(card?.queueIndex).toBe(2);
+    expect(card?.dateLabel).toBe("#3 · 2026-01-01");
+    const bare = cfn("Fav Collector/youtube/T.md", '---\nplatform: "youtube"\nurl: "https://u"\nplaylist_index: 0\n---\n# T\n');
+    expect(bare?.dateLabel).toBe("#1");
+  });
+});

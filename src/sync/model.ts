@@ -32,6 +32,8 @@ export interface CollectedItem {
   publishedAt?: string;
   /** 小宇宙等：未听完（收听历史 isFinished=false）。 */
   unfinished?: boolean;
+  /** YouTube 等：列表中的位置（0=最上/最新加入），队列排序用。 */
+  playlistIndex?: number;
 }
 
 export interface PlatformResult {

@@ -30,6 +30,9 @@ export interface FsAdapter {
   exists(path: string): Promise<boolean>;
   mkdir(path: string): Promise<void>;
   write(path: string, content: string): Promise<void>;
+  read(path: string): Promise<string>;
+  /** 覆盖已存在文件内容（仅 refreshYoutubeOrder 用，只碰 frontmatter 一行）。 */
+  overwrite(path: string, content: string): Promise<void>;
   /** 把旧路径笔记搬到新路径（仅改路径，不碰内容）；不支持则抛错由调用方吞掉 */
   rename(oldPath: string, newPath: string): Promise<void>;
 }
@@ -147,6 +150,54 @@ export async function relocateItems(
     }
   }
   return { moved: movedPaths.length, movedPaths };
+}
+
+/**
+ * 刷新 YouTube 队列位置号：稍后再看是栈，新加的顶上来，旧位置全变。
+ * 只改 frontmatter 的 playlist_index 行（或在 url 行后插入），不动用户区。
+ */
+export async function refreshYoutubeOrder(
+  fs: FsAdapter,
+  urlToPath: Map<string, string>,
+  items: CollectedItem[],
+): Promise<{ updated: number }> {
+  let updated = 0;
+  for (const it of items) {
+    if (it.platform !== "youtube" || it.playlistIndex === undefined) continue;
+    const p = urlToPath.get(it.url);
+    if (!p) continue;
+    try {
+      const md = await fs.read(p);
+      const nl = md.includes("\r\n") ? "\r\n" : "\n";
+      const lines = md.split(/\r?\n/);
+      const fmEnd = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+      if (fmEnd <= 0) continue;
+      let touched = false;
+      for (let i = 1; i < fmEnd; i += 1) {
+        if (/^playlist_index:\s*\d+/.test(lines[i])) {
+          const next = `playlist_index: ${it.playlistIndex}`;
+          if (lines[i] !== next) {
+            lines[i] = next;
+            touched = true;
+          }
+          break;
+        }
+      }
+      if (!touched) {
+        const urlIdx = lines.findIndex((l, i) => i < fmEnd && /^url:\s*/.test(l));
+        if (urlIdx < 0) continue;
+        lines.splice(urlIdx + 1, 0, `playlist_index: ${it.playlistIndex}`);
+        touched = true;
+      }
+      if (touched) {
+        await fs.overwrite(p, lines.join(nl));
+        updated += 1;
+      }
+    } catch {
+      // 单条失败不阻塞
+    }
+  }
+  return { updated };
 }
 
 export { PLATFORMS };

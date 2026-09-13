@@ -40,14 +40,17 @@ function baseArgs(opts: YoutubeOptions): string[] {
   return args;
 }
 
-/** 纯函数：解析 flat-playlist 输出（单测）。 */
+/** 纯函数：解析 flat-playlist 输出（单测）。行号即队列位置（0=列表最上=最新加入）。 */
 export function parseFlatList(stdout: string, listId: "WL" | "LL"): CollectedItem[] {
   const items: CollectedItem[] = [];
+  let idx = 0;
   for (const line of stdout.split("\n")) {
     const m = line.match(/^(\S+)\t(.*)$/);
     if (!m) continue;
     const it = makeItem("youtube", `${listId}_${m[1]}`, `https://www.youtube.com/watch?v=${m[1]}`, (m[2] || "(无标题)").slice(0, 150));
     it.watchLater = listId === "WL";
+    it.playlistIndex = idx;
+    idx += 1;
     // 收藏夹归属：WL 走 notePathFor 的 watchLater→稍后再看；LL 显式给 folder，保证平台 tab 内有分组
     if (listId === "LL") it.folder = "喜欢";
     it.coverUrl = `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg`;

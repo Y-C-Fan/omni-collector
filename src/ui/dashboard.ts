@@ -219,8 +219,15 @@ export class FavDashboardView extends ItemView {
         skipped += 1;
       }
     }
-    // 最新在上：发布时间/文件名前缀日期 → 都没有则按入库时间（ctime）
-    out.sort((a, b) => b.sortKey.localeCompare(a.sortKey) || b.ctime - a.ctime || a.path.localeCompare(b.path));
+    // 队列优先（YouTube 稍后再看/喜欢：位置号小=新加入在上）；其余按时间倒序→入库倒序
+    out.sort((a, b) => {
+      const aq = a.queueIndex;
+      const bq = b.queueIndex;
+      if (aq !== undefined && bq !== undefined && a.platform === b.platform) return aq - bq;
+      if (aq !== undefined && bq === undefined) return -1;
+      if (aq === undefined && bq !== undefined) return 1;
+      return b.sortKey.localeCompare(a.sortKey) || b.ctime - a.ctime || a.path.localeCompare(b.path);
+    });
     return { cards: out, scanned: files.length, skipped };
   }
 }

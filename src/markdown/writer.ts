@@ -28,6 +28,7 @@ export function buildNote(item: CollectedItem): string {
     `url: ${yamlString(item.url)}`,
     ...(item.author ? [`author: ${yamlString(item.author)}`] : []),
     ...(item.publishedAt ? [`published_at: ${yamlString(item.publishedAt)}`] : []),
+    ...(item.playlistIndex !== undefined ? [`playlist_index: ${item.playlistIndex}`] : []),
     ...(item.unfinished ? [`unfinished: true`] : []),
     ...(item.folder ? [`folder: ${yamlString(item.folder)}`] : []),
     ...(item.coverUrl ? [`cover: ${yamlString(item.coverUrl)}`] : []),
@@ -83,6 +84,8 @@ export interface CardData {
   author?: string;
   publishedAt?: string;
   unfinished?: boolean;
+  /** YouTube 队列位置（0=最上），有它则按队列排、显示 #N */
+  queueIndex?: number;
   folder?: string;
   cover?: string;
   description?: string;
@@ -119,6 +122,11 @@ export function cardFromNote(path: string, md: string, ctime = 0): CardData | nu
   const publishedAt = fm.published_at || undefined;
   const sortKey = publishedAt ?? dateM?.[1] ?? "";
   const unfinished = fm.unfinished === "true";
+  const qi = fm.playlist_index !== undefined && fm.playlist_index !== "" ? Number(fm.playlist_index) : undefined;
+  const queueIndex = qi !== undefined && Number.isFinite(qi) ? qi : undefined;
+  const dateLabel = queueIndex !== undefined
+    ? `#${queueIndex + 1}${publishedAt ? ` · ${publishedAt}` : ""}`
+    : (publishedAt ?? dateM?.[1] ?? "未知时间");
   return {
     path,
     platform: fm.platform as Platform,
@@ -131,7 +139,8 @@ export function cardFromNote(path: string, md: string, ctime = 0): CardData | nu
     cover,
     description,
     sortKey,
-    dateLabel: publishedAt ?? dateM?.[1] ?? "未知时间",
+    dateLabel,
+    queueIndex,
     ctime,
   };
 }
