@@ -6,7 +6,7 @@ import { Notice, Plugin, WorkspaceLeaf, requestUrl } from "obsidian";
 import { DEFAULT_SETTINGS, type FavSettings } from "./settings.js";import { FavSettingTab } from "./settings-tab.js";
 import { FavDashboardView, VIEW_TYPE_FAV_DASHBOARD } from "./ui/dashboard.js";
 import { parseFrontmatter } from "./markdown/writer.js";
-import { syncPlatform, writeNewItems, relocateItems, refreshQueueOrder } from "./sync/runner.js";
+import { syncPlatform, writeNewItems, relocateItems, refreshQueueOrder, collectGarbage } from "./sync/runner.js";
 import { enrichYoutubeDates, enrichYoutubeDesc } from "./sync/youtube.js";
 import { PLATFORMS, PLATFORM_LABEL } from "./sync/model.js";
 import type { CollectedItem, HttpGet, Platform, PlatformResult } from "./sync/model.js";
@@ -16,6 +16,8 @@ export interface SyncPlatformProgress {
   platform: Platform;
   ok: boolean;
   added: number;
+  /** 本次远端已删、挪进回收站的条数 */
+  trashed?: number;
   error?: string;
 }
 
@@ -210,9 +212,12 @@ export default class FavCollectorPlugin extends Plugin {
         ? await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result])
         : { moved: 0, movedPaths: [] as string[] };
       const report = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
+      let trashed = 0;
       if (result.ok) {
         this.setStep(`${PLATFORM_LABEL[platform]}队列位置刷新（收藏夹是栈，新加的顶上来）…`);
         await refreshQueueOrder(this.fsAdapter(), urlToPath, result.items);
+        this.setStep(`${PLATFORM_LABEL[platform]}检查远端已删除（进回收站，不真删）…`);
+        trashed = (await collectGarbage(this.fsAdapter(), urlToPath, [result])).trashed;
       }
       this.settings.lastSync[platform] = {
         at: new Date().toISOString(),
@@ -224,11 +229,10 @@ export default class FavCollectorPlugin extends Plugin {
       this.syncProgress.running = false;
       this.syncProgress.current = undefined;
       this.syncProgress.step = undefined;
-      this.syncProgress.done = [{ platform, ok: result.ok, added: report.added, error: result.error }];
-      this.syncProgress.finishedAt = new Date().toISOString();
+      this.syncProgress.done = [{ platform, ok: result.ok, added: report.added, trashed, error: result.error }];
       this.setStatus(result.ok ? `Fav: ${platform} +${report.added}` : `Fav: ${platform} 失败`);
       this.emitProgress();
-      new Notice(result.ok ? `${platform} 同步完成，新增 ${report.added} 条${moved.moved > 0 ? `，归档 ${moved.moved} 条` : ""}` : `${platform} 失败：${result.error}`);
+      new Notice(result.ok ? `${platform} 同步完成，新增 ${report.added} 条${moved.moved > 0 ? `，归档 ${moved.moved} 条` : ""}${trashed > 0 ? `，远端已删 ${trashed} 条进回收站` : ""}` : `${platform} 失败：${result.error}`);
     } finally {
       this.syncing = false;
     }
@@ -290,6 +294,7 @@ export default class FavCollectorPlugin extends Plugin {
       const { favIds, urls, favIdToPath, urlToPath } = await this.scanExisting();
       let totalAdded = 0;
       let totalMoved = 0;
+      let totalTrashed = 0;
       let idx = 0;
       for (const p of PLATFORMS) {
         idx += 1;
@@ -304,6 +309,7 @@ export default class FavCollectorPlugin extends Plugin {
           result = { platform: p, ok: false, items: [], error: (e as Error).message };
         }
         let added = 0;
+        let trashed = 0;
         if (result.ok) {
           try {
             this.setStep(
@@ -316,13 +322,16 @@ export default class FavCollectorPlugin extends Plugin {
             const rep = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
             this.setStep(`${PLATFORM_LABEL[p]}队列位置刷新（收藏夹是栈，新加的顶上来）…`);
             await refreshQueueOrder(this.fsAdapter(), urlToPath, result.items);
+            this.setStep(`${PLATFORM_LABEL[p]}检查远端已删除（进回收站，不真删）…`);
+            trashed = (await collectGarbage(this.fsAdapter(), urlToPath, [result])).trashed;
+            totalTrashed += trashed;
             added = rep.added;
             totalAdded += added;
           } catch (e) {
             result = { platform: p, ok: false, items: [], error: `写笔记失败：${(e as Error).message}` };
           }
         }
-        this.syncProgress.done.push({ platform: p, ok: result.ok, added, error: result.error });
+        this.syncProgress.done.push({ platform: p, ok: result.ok, added, trashed, error: result.error });
         this.settings.lastSync[p] = { at: new Date().toISOString(), ok: result.ok, added, error: result.error };
         await this.saveSettings();
         this.emitProgress();
@@ -337,8 +346,8 @@ export default class FavCollectorPlugin extends Plugin {
       this.emitProgress();
       new Notice(
         failed.length === 0
-          ? `同步完成：${PLATFORMS.length}/${PLATFORMS.length} 平台，新增 ${totalAdded} 条${totalMoved > 0 ? `，归档 ${totalMoved} 条` : ""}`
-          : `同步完成 ${okCount}/${PLATFORMS.length}，新增 ${totalAdded} 条；失败：${failed.join("、")}（看总览红卡重试）`,
+          ? `同步完成：${PLATFORMS.length}/${PLATFORMS.length} 平台，新增 ${totalAdded} 条${totalMoved > 0 ? `，归档 ${totalMoved} 条` : ""}${totalTrashed > 0 ? `，远端已删 ${totalTrashed} 条进回收站` : ""}`
+          : `同步完成 ${okCount}/${PLATFORMS.length}，新增 ${totalAdded} 条${totalTrashed > 0 ? `，进回收站 ${totalTrashed} 条` : ""}；失败：${failed.join("、")}（看总览红卡重试）`,
       );
       await this.openDashboard();
     } finally {

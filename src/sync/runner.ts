@@ -201,3 +201,45 @@ export async function refreshQueueOrder(
 }
 
 export { PLATFORMS };
+
+/** 远端删掉的笔记暂存区：只挪路径不动内容，恢复=去掉前缀搬回去。 */
+export const TRASH_DIR = "Fav Collector/_已删除";
+const TRASH_PREFIX = `${TRASH_DIR}/`;
+/**
+ * 参与删除同步的平台：必须"是收藏"语义。
+ * 小宇宙主入口是收听历史（滚动窗口，老节目自然掉出前 N 条），不是收藏，不参与。
+ */
+const GARBAGE_PLATFORMS: Platform[] = ["bilibili", "youtube", "zhihu", "x", "github"];
+
+/**
+ * 删除同步：远端列表里没有 = 取消收藏/删除 → 挪进回收站。
+ * 安全阀：只处理 ok 的平台（抓失败绝不删）；只动该平台活区文件（_已删除里的不动）；
+ * 目标被占则跳过，绝不覆盖。调用方须在 relocate/write/refresh 之后调。
+ */
+export async function collectGarbage(
+  fs: FsAdapter,
+  urlToPath: Map<string, string>,
+  results: PlatformResult[],
+): Promise<{ trashed: number; trashedPaths: string[] }> {
+  const trashedPaths: string[] = [];
+  for (const r of results) {
+    if (!r.ok || !GARBAGE_PLATFORMS.includes(r.platform)) continue;
+    const live = new Set(r.items.map((it) => it.url));
+    const prefix = `Fav Collector/${r.platform}/`;
+    for (const [url, path] of urlToPath) {
+      if (!path.startsWith(prefix)) continue;
+      if (live.has(url)) continue;
+      const target = `${TRASH_PREFIX}${path.slice("Fav Collector/".length)}`;
+      if (await fs.exists(target)) continue;
+      try {
+        await fs.mkdir(target.slice(0, target.lastIndexOf("/")));
+        await fs.rename(path, target);
+        urlToPath.set(url, target);
+        trashedPaths.push(`${path} -> ${target}`);
+      } catch {
+        // 单条失败不阻塞
+      }
+    }
+  }
+  return { trashed: trashedPaths.length, trashedPaths };
+}

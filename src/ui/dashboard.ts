@@ -11,6 +11,7 @@ export const VIEW_TYPE_FAV_DASHBOARD = "fav-collector-dashboard";
 export class FavDashboardView extends ItemView {
   private filter: Platform | "all" = "all";
   private folderFilter = "all";
+  private showTrash = false;
   private unsubProgress?: () => void;
   private lastRenderAt = 0;
 
@@ -54,7 +55,8 @@ export class FavDashboardView extends ItemView {
       const parts: string[] = [];
       for (const p of PLATFORMS) {
         const d = doneMap.get(p);
-        if (d) parts.push(`${d.ok ? "✓" : "✗"} ${PLATFORM_LABEL[p]}${d.ok ? ` +${d.added}` : ""}`);
+        const tail = (x: { ok: boolean; added: number; trashed?: number }) => (x.ok ? ` +${x.added}${x.trashed ? ` 🗑${x.trashed}` : ""}` : "");
+        if (d) parts.push(`${d.ok ? "✓" : "✗"} ${PLATFORM_LABEL[p]}${tail(d)}`);
         else if (sp.current === p) parts.push(`▶ ${PLATFORM_LABEL[p]}…`);
         else parts.push(`⏳ ${PLATFORM_LABEL[p]}`);
       }
@@ -69,7 +71,7 @@ export class FavDashboardView extends ItemView {
       });
       box.createDiv({
         cls: "fav-syncgress-line",
-        text: sp.done.map((d) => `${d.ok ? "✓" : "✗"} ${PLATFORM_LABEL[d.platform]} +${d.added}`).join(" · "),
+        text: sp.done.map((d) => `${d.ok ? "✓" : "✗"} ${PLATFORM_LABEL[d.platform]} +${d.added}${d.trashed ? ` 🗑${d.trashed}` : ""}`).join(" · "),
       });
     } else {
       // 本次会话没跑过：读上次持久化成绩
@@ -153,7 +155,31 @@ export class FavDashboardView extends ItemView {
     for (const p of PLATFORMS) mkPlatFilter(p, PLATFORM_LABEL[p]);
 
     // 卡片（按收藏夹分组）
-    const { cards, scanned, skipped } = await this.loadCards();
+    const { cards, trash, scanned, skipped } = await this.loadCards();
+    const trashB = filterBar.createEl("button", { text: `回收站（${trash.length}）`, cls: this.showTrash ? "active" : "" });
+    trashB.onclick = () => {
+      this.showTrash = !this.showTrash;
+      void this.render();
+    };
+    const now0 = new Date();
+    const p2 = (n: number) => n.toString().padStart(2, "0");
+    const stampNow = `${p2(now0.getHours())}:${p2(now0.getMinutes())}:${p2(now0.getSeconds())}`;
+    if (this.showTrash) {
+      // 回收站视图：远端已删的笔记，每条可一键恢复
+      const tShown = trash.filter((c) => this.filter === "all" || c.platform === this.filter);
+      const tGroups = groupCards(tShown, "all");
+      status.setText(`回收站 ${tShown.length} 条（远端已删，内容保留）· 扫描 ${scanned} 文件 · 更新于 ${stampNow}`);
+      for (const g of tGroups) {
+        el.createEl("h4", { text: `${g.label}（${g.items.length}）`, cls: "fav-group-title" });
+        const grid = el.createDiv({ cls: "fav-cards" });
+        for (const c of g.items) {
+          const card = this.cardEl(grid, c);
+          const restore = card.createEl("button", { text: "恢复" });
+          restore.onclick = () => void this.restoreTrash(c.path);
+        }
+      }
+      return;
+    }
     const shown = cards.filter((c) => this.filter === "all" || c.platform === this.filter);
     let groups = groupCards(shown, this.filter);
     // 收藏夹筛选条
@@ -185,26 +211,32 @@ export class FavDashboardView extends ItemView {
       for (const c of g.items) {
         if (rendered >= 500) break;
         rendered += 1;
-        const card = grid.createDiv({ cls: "fav-card" });
-        if (c.cover) {
-          const img = card.createEl("img", { cls: "fav-cover" });
-          img.src = c.cover;
-          img.loading = "lazy";
-        }
-        const title = card.createDiv({ cls: "fav-title" });
-        const link = title.createEl("a", { text: c.title, cls: "internal-link" });
-        link.onclick = (e) => {
-          e.preventDefault();
-          void this.openNote(c.path);
-        };
-        const meta = card.createDiv({ cls: "fav-meta" });
-        const badge = meta.createSpan({ cls: `fav-badge ${c.platform}`, text: PLATFORM_LABEL[c.platform] });
-        void badge;
-        meta.appendText(`${c.dateLabel}${c.author ? ` · ${c.author}` : ""}${c.unfinished ? " · 未听完" : ""}`);
-        if (c.description) card.createDiv({ cls: "fav-desc", text: c.description });
+        this.cardEl(grid, c);
       }
       if (rendered >= 500) break;
     }
+  }
+
+  /** 单张卡片（标题/封面/meta/简介）；回收站视图复用后再挂恢复按钮。 */
+  private cardEl(grid: HTMLElement, c: CardData): HTMLElement {
+    const card = grid.createDiv({ cls: "fav-card" });
+    if (c.cover) {
+      const img = card.createEl("img", { cls: "fav-cover" });
+      img.src = c.cover;
+      img.loading = "lazy";
+    }
+    const title = card.createDiv({ cls: "fav-title" });
+    const link = title.createEl("a", { text: c.title, cls: "internal-link" });
+    link.onclick = (e) => {
+      e.preventDefault();
+      void this.openNote(c.path);
+    };
+    const meta = card.createDiv({ cls: "fav-meta" });
+    const badge = meta.createSpan({ cls: `fav-badge ${c.platform}`, text: PLATFORM_LABEL[c.platform] });
+    void badge;
+    meta.appendText(`${c.dateLabel}${c.author ? ` · ${c.author}` : ""}${c.unfinished ? " · 未听完" : ""}`);
+    if (c.description) card.createDiv({ cls: "fav-desc", text: c.description });
+    return card;
   }
 
   private async openNote(path: string): Promise<void> {
@@ -213,15 +245,16 @@ export class FavDashboardView extends ItemView {
     else new Notice(`文件不存在：${path}`);
   }
 
-  private async loadCards(): Promise<{ cards: CardData[]; scanned: number; skipped: number }> {
+  private async loadCards(): Promise<{ cards: CardData[]; trash: CardData[]; scanned: number; skipped: number }> {
     const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith("Fav Collector/"));
     const out: CardData[] = [];
+    const trash: CardData[] = [];
     let skipped = 0;
     for (const f of files) {
       try {
         const md = await this.app.vault.read(f);
         const card = cardFromNote(f.path, md, f.stat.ctime);
-        if (card) out.push(card);
+        if (card) (f.path.includes("/_已删除/") ? trash : out).push(card);
         else skipped += 1;
       } catch {
         skipped += 1;
@@ -236,6 +269,25 @@ export class FavDashboardView extends ItemView {
       if (aq === undefined && bq !== undefined) return 1;
       return b.sortKey.localeCompare(a.sortKey) || b.ctime - a.ctime || a.path.localeCompare(b.path);
     });
-    return { cards: out, scanned: files.length, skipped };
+    return { cards: out, trash, scanned: files.length, skipped };
+  }
+
+  /** 回收站恢复：去掉 _已删除/ 前缀搬回原位（内容不动）。 */
+  private async restoreTrash(path: string): Promise<void> {
+    const target = path.replace("Fav Collector/_已删除/", "Fav Collector/");
+    if (target === path) return;
+    const f = this.app.vault.getFileByPath(path);
+    if (!f) {
+      new Notice("文件已经不在了");
+      return;
+    }
+    try {
+      await this.app.vault.createFolder(target.slice(0, target.lastIndexOf("/"))).catch(() => undefined);
+      await this.app.vault.rename(f, target);
+      new Notice("已从回收站恢复");
+    } catch (e) {
+      new Notice(`恢复失败：${(e as Error).message}`);
+    }
+    await this.render();
   }
 }

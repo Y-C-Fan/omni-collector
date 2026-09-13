@@ -293,6 +293,7 @@ var FavDashboardView = class extends import_obsidian2.ItemView {
     this.plugin = plugin;
     this.filter = "all";
     this.folderFilter = "all";
+    this.showTrash = false;
     this.lastRenderAt = 0;
   }
   getViewType() {
@@ -323,7 +324,8 @@ var FavDashboardView = class extends import_obsidian2.ItemView {
       const parts = [];
       for (const p of PLATFORMS) {
         const d = doneMap.get(p);
-        if (d) parts.push(`${d.ok ? "\u2713" : "\u2717"} ${PLATFORM_LABEL[p]}${d.ok ? ` +${d.added}` : ""}`);
+        const tail = (x) => x.ok ? ` +${x.added}${x.trashed ? ` \u{1F5D1}${x.trashed}` : ""}` : "";
+        if (d) parts.push(`${d.ok ? "\u2713" : "\u2717"} ${PLATFORM_LABEL[p]}${tail(d)}`);
         else if (sp.current === p) parts.push(`\u25B6 ${PLATFORM_LABEL[p]}\u2026`);
         else parts.push(`\u23F3 ${PLATFORM_LABEL[p]}`);
       }
@@ -338,7 +340,7 @@ var FavDashboardView = class extends import_obsidian2.ItemView {
       });
       box.createDiv({
         cls: "fav-syncgress-line",
-        text: sp.done.map((d) => `${d.ok ? "\u2713" : "\u2717"} ${PLATFORM_LABEL[d.platform]} +${d.added}`).join(" \xB7 ")
+        text: sp.done.map((d) => `${d.ok ? "\u2713" : "\u2717"} ${PLATFORM_LABEL[d.platform]} +${d.added}${d.trashed ? ` \u{1F5D1}${d.trashed}` : ""}`).join(" \xB7 ")
       });
     } else {
       const last = this.plugin.settings.lastSync;
@@ -407,7 +409,30 @@ var FavDashboardView = class extends import_obsidian2.ItemView {
     };
     mkPlatFilter("all", "\u5168\u90E8");
     for (const p of PLATFORMS) mkPlatFilter(p, PLATFORM_LABEL[p]);
-    const { cards, scanned, skipped } = await this.loadCards();
+    const { cards, trash, scanned, skipped } = await this.loadCards();
+    const trashB = filterBar.createEl("button", { text: `\u56DE\u6536\u7AD9\uFF08${trash.length}\uFF09`, cls: this.showTrash ? "active" : "" });
+    trashB.onclick = () => {
+      this.showTrash = !this.showTrash;
+      void this.render();
+    };
+    const now0 = /* @__PURE__ */ new Date();
+    const p2 = (n) => n.toString().padStart(2, "0");
+    const stampNow = `${p2(now0.getHours())}:${p2(now0.getMinutes())}:${p2(now0.getSeconds())}`;
+    if (this.showTrash) {
+      const tShown = trash.filter((c) => this.filter === "all" || c.platform === this.filter);
+      const tGroups = groupCards(tShown, "all");
+      status.setText(`\u56DE\u6536\u7AD9 ${tShown.length} \u6761\uFF08\u8FDC\u7AEF\u5DF2\u5220\uFF0C\u5185\u5BB9\u4FDD\u7559\uFF09\xB7 \u626B\u63CF ${scanned} \u6587\u4EF6 \xB7 \u66F4\u65B0\u4E8E ${stampNow}`);
+      for (const g of tGroups) {
+        el.createEl("h4", { text: `${g.label}\uFF08${g.items.length}\uFF09`, cls: "fav-group-title" });
+        const grid = el.createDiv({ cls: "fav-cards" });
+        for (const c of g.items) {
+          const card = this.cardEl(grid, c);
+          const restore = card.createEl("button", { text: "\u6062\u590D" });
+          restore.onclick = () => void this.restoreTrash(c.path);
+        }
+      }
+      return;
+    }
     const shown = cards.filter((c) => this.filter === "all" || c.platform === this.filter);
     let groups = groupCards(shown, this.filter);
     if (groups.length > 1) {
@@ -438,25 +463,30 @@ var FavDashboardView = class extends import_obsidian2.ItemView {
       for (const c of g.items) {
         if (rendered >= 500) break;
         rendered += 1;
-        const card = grid.createDiv({ cls: "fav-card" });
-        if (c.cover) {
-          const img = card.createEl("img", { cls: "fav-cover" });
-          img.src = c.cover;
-          img.loading = "lazy";
-        }
-        const title = card.createDiv({ cls: "fav-title" });
-        const link = title.createEl("a", { text: c.title, cls: "internal-link" });
-        link.onclick = (e) => {
-          e.preventDefault();
-          void this.openNote(c.path);
-        };
-        const meta = card.createDiv({ cls: "fav-meta" });
-        const badge = meta.createSpan({ cls: `fav-badge ${c.platform}`, text: PLATFORM_LABEL[c.platform] });
-        meta.appendText(`${c.dateLabel}${c.author ? ` \xB7 ${c.author}` : ""}${c.unfinished ? " \xB7 \u672A\u542C\u5B8C" : ""}`);
-        if (c.description) card.createDiv({ cls: "fav-desc", text: c.description });
+        this.cardEl(grid, c);
       }
       if (rendered >= 500) break;
     }
+  }
+  /** 单张卡片（标题/封面/meta/简介）；回收站视图复用后再挂恢复按钮。 */
+  cardEl(grid, c) {
+    const card = grid.createDiv({ cls: "fav-card" });
+    if (c.cover) {
+      const img = card.createEl("img", { cls: "fav-cover" });
+      img.src = c.cover;
+      img.loading = "lazy";
+    }
+    const title = card.createDiv({ cls: "fav-title" });
+    const link = title.createEl("a", { text: c.title, cls: "internal-link" });
+    link.onclick = (e) => {
+      e.preventDefault();
+      void this.openNote(c.path);
+    };
+    const meta = card.createDiv({ cls: "fav-meta" });
+    const badge = meta.createSpan({ cls: `fav-badge ${c.platform}`, text: PLATFORM_LABEL[c.platform] });
+    meta.appendText(`${c.dateLabel}${c.author ? ` \xB7 ${c.author}` : ""}${c.unfinished ? " \xB7 \u672A\u542C\u5B8C" : ""}`);
+    if (c.description) card.createDiv({ cls: "fav-desc", text: c.description });
+    return card;
   }
   async openNote(path) {
     const f = this.app.vault.getFileByPath(path);
@@ -466,12 +496,13 @@ var FavDashboardView = class extends import_obsidian2.ItemView {
   async loadCards() {
     const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith("Fav Collector/"));
     const out = [];
+    const trash = [];
     let skipped = 0;
     for (const f of files) {
       try {
         const md = await this.app.vault.read(f);
         const card = cardFromNote(f.path, md, f.stat.ctime);
-        if (card) out.push(card);
+        if (card) (f.path.includes("/_\u5DF2\u5220\u9664/") ? trash : out).push(card);
         else skipped += 1;
       } catch {
         skipped += 1;
@@ -485,7 +516,25 @@ var FavDashboardView = class extends import_obsidian2.ItemView {
       if (aq === void 0 && bq !== void 0) return 1;
       return b.sortKey.localeCompare(a.sortKey) || b.ctime - a.ctime || a.path.localeCompare(b.path);
     });
-    return { cards: out, scanned: files.length, skipped };
+    return { cards: out, trash, scanned: files.length, skipped };
+  }
+  /** 回收站恢复：去掉 _已删除/ 前缀搬回原位（内容不动）。 */
+  async restoreTrash(path) {
+    const target = path.replace("Fav Collector/_\u5DF2\u5220\u9664/", "Fav Collector/");
+    if (target === path) return;
+    const f = this.app.vault.getFileByPath(path);
+    if (!f) {
+      new import_obsidian2.Notice("\u6587\u4EF6\u5DF2\u7ECF\u4E0D\u5728\u4E86");
+      return;
+    }
+    try {
+      await this.app.vault.createFolder(target.slice(0, target.lastIndexOf("/"))).catch(() => void 0);
+      await this.app.vault.rename(f, target);
+      new import_obsidian2.Notice("\u5DF2\u4ECE\u56DE\u6536\u7AD9\u6062\u590D");
+    } catch (e) {
+      new import_obsidian2.Notice(`\u6062\u590D\u5931\u8D25\uFF1A${e.message}`);
+    }
+    await this.render();
   }
 };
 
@@ -1178,6 +1227,31 @@ async function refreshQueueOrder(fs, urlToPath, items) {
   }
   return { updated };
 }
+var TRASH_DIR = "Fav Collector/_\u5DF2\u5220\u9664";
+var TRASH_PREFIX = `${TRASH_DIR}/`;
+var GARBAGE_PLATFORMS = ["bilibili", "youtube", "zhihu", "x", "github"];
+async function collectGarbage(fs, urlToPath, results) {
+  const trashedPaths = [];
+  for (const r of results) {
+    if (!r.ok || !GARBAGE_PLATFORMS.includes(r.platform)) continue;
+    const live = new Set(r.items.map((it) => it.url));
+    const prefix = `Fav Collector/${r.platform}/`;
+    for (const [url, path] of urlToPath) {
+      if (!path.startsWith(prefix)) continue;
+      if (live.has(url)) continue;
+      const target = `${TRASH_PREFIX}${path.slice("Fav Collector/".length)}`;
+      if (await fs.exists(target)) continue;
+      try {
+        await fs.mkdir(target.slice(0, target.lastIndexOf("/")));
+        await fs.rename(path, target);
+        urlToPath.set(url, target);
+        trashedPaths.push(`${path} -> ${target}`);
+      } catch {
+      }
+    }
+  }
+  return { trashed: trashedPaths.length, trashedPaths };
+}
 
 // src/main.ts
 var FavCollectorPlugin = class extends import_obsidian3.Plugin {
@@ -1342,9 +1416,12 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       if (result.ok) this.setStep(`${PLATFORM_LABEL[platform]}\u6293\u5230 ${result.items.length} \u6761 \u2192 \u53BB\u91CD/\u5F52\u6863/\u843D\u76D8\u2026`);
       const moved = result.ok ? await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]) : { moved: 0, movedPaths: [] };
       const report = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
+      let trashed = 0;
       if (result.ok) {
         this.setStep(`${PLATFORM_LABEL[platform]}\u961F\u5217\u4F4D\u7F6E\u5237\u65B0\uFF08\u6536\u85CF\u5939\u662F\u6808\uFF0C\u65B0\u52A0\u7684\u9876\u4E0A\u6765\uFF09\u2026`);
         await refreshQueueOrder(this.fsAdapter(), urlToPath, result.items);
+        this.setStep(`${PLATFORM_LABEL[platform]}\u68C0\u67E5\u8FDC\u7AEF\u5DF2\u5220\u9664\uFF08\u8FDB\u56DE\u6536\u7AD9\uFF0C\u4E0D\u771F\u5220\uFF09\u2026`);
+        trashed = (await collectGarbage(this.fsAdapter(), urlToPath, [result])).trashed;
       }
       this.settings.lastSync[platform] = {
         at: (/* @__PURE__ */ new Date()).toISOString(),
@@ -1356,11 +1433,10 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       this.syncProgress.running = false;
       this.syncProgress.current = void 0;
       this.syncProgress.step = void 0;
-      this.syncProgress.done = [{ platform, ok: result.ok, added: report.added, error: result.error }];
-      this.syncProgress.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+      this.syncProgress.done = [{ platform, ok: result.ok, added: report.added, trashed, error: result.error }];
       this.setStatus(result.ok ? `Fav: ${platform} +${report.added}` : `Fav: ${platform} \u5931\u8D25`);
       this.emitProgress();
-      new import_obsidian3.Notice(result.ok ? `${platform} \u540C\u6B65\u5B8C\u6210\uFF0C\u65B0\u589E ${report.added} \u6761${moved.moved > 0 ? `\uFF0C\u5F52\u6863 ${moved.moved} \u6761` : ""}` : `${platform} \u5931\u8D25\uFF1A${result.error}`);
+      new import_obsidian3.Notice(result.ok ? `${platform} \u540C\u6B65\u5B8C\u6210\uFF0C\u65B0\u589E ${report.added} \u6761${moved.moved > 0 ? `\uFF0C\u5F52\u6863 ${moved.moved} \u6761` : ""}${trashed > 0 ? `\uFF0C\u8FDC\u7AEF\u5DF2\u5220 ${trashed} \u6761\u8FDB\u56DE\u6536\u7AD9` : ""}` : `${platform} \u5931\u8D25\uFF1A${result.error}`);
     } finally {
       this.syncing = false;
     }
@@ -1417,6 +1493,7 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       const { favIds, urls, favIdToPath, urlToPath } = await this.scanExisting();
       let totalAdded = 0;
       let totalMoved = 0;
+      let totalTrashed = 0;
       let idx = 0;
       for (const p of PLATFORMS) {
         idx += 1;
@@ -1431,6 +1508,7 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
           result = { platform: p, ok: false, items: [], error: e.message };
         }
         let added = 0;
+        let trashed = 0;
         if (result.ok) {
           try {
             this.setStep(
@@ -1441,13 +1519,16 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
             const rep = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
             this.setStep(`${PLATFORM_LABEL[p]}\u961F\u5217\u4F4D\u7F6E\u5237\u65B0\uFF08\u6536\u85CF\u5939\u662F\u6808\uFF0C\u65B0\u52A0\u7684\u9876\u4E0A\u6765\uFF09\u2026`);
             await refreshQueueOrder(this.fsAdapter(), urlToPath, result.items);
+            this.setStep(`${PLATFORM_LABEL[p]}\u68C0\u67E5\u8FDC\u7AEF\u5DF2\u5220\u9664\uFF08\u8FDB\u56DE\u6536\u7AD9\uFF0C\u4E0D\u771F\u5220\uFF09\u2026`);
+            trashed = (await collectGarbage(this.fsAdapter(), urlToPath, [result])).trashed;
+            totalTrashed += trashed;
             added = rep.added;
             totalAdded += added;
           } catch (e) {
             result = { platform: p, ok: false, items: [], error: `\u5199\u7B14\u8BB0\u5931\u8D25\uFF1A${e.message}` };
           }
         }
-        this.syncProgress.done.push({ platform: p, ok: result.ok, added, error: result.error });
+        this.syncProgress.done.push({ platform: p, ok: result.ok, added, trashed, error: result.error });
         this.settings.lastSync[p] = { at: (/* @__PURE__ */ new Date()).toISOString(), ok: result.ok, added, error: result.error };
         await this.saveSettings();
         this.emitProgress();
@@ -1461,7 +1542,7 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       this.setStatus(failed.length === 0 ? `Fav: \u5B8C\u6210 +${totalAdded}` : `Fav: ${failed.join("\u3001")}\u5931\u8D25`);
       this.emitProgress();
       new import_obsidian3.Notice(
-        failed.length === 0 ? `\u540C\u6B65\u5B8C\u6210\uFF1A${PLATFORMS.length}/${PLATFORMS.length} \u5E73\u53F0\uFF0C\u65B0\u589E ${totalAdded} \u6761${totalMoved > 0 ? `\uFF0C\u5F52\u6863 ${totalMoved} \u6761` : ""}` : `\u540C\u6B65\u5B8C\u6210 ${okCount}/${PLATFORMS.length}\uFF0C\u65B0\u589E ${totalAdded} \u6761\uFF1B\u5931\u8D25\uFF1A${failed.join("\u3001")}\uFF08\u770B\u603B\u89C8\u7EA2\u5361\u91CD\u8BD5\uFF09`
+        failed.length === 0 ? `\u540C\u6B65\u5B8C\u6210\uFF1A${PLATFORMS.length}/${PLATFORMS.length} \u5E73\u53F0\uFF0C\u65B0\u589E ${totalAdded} \u6761${totalMoved > 0 ? `\uFF0C\u5F52\u6863 ${totalMoved} \u6761` : ""}${totalTrashed > 0 ? `\uFF0C\u8FDC\u7AEF\u5DF2\u5220 ${totalTrashed} \u6761\u8FDB\u56DE\u6536\u7AD9` : ""}` : `\u540C\u6B65\u5B8C\u6210 ${okCount}/${PLATFORMS.length}\uFF0C\u65B0\u589E ${totalAdded} \u6761${totalTrashed > 0 ? `\uFF0C\u8FDB\u56DE\u6536\u7AD9 ${totalTrashed} \u6761` : ""}\uFF1B\u5931\u8D25\uFF1A${failed.join("\u3001")}\uFF08\u770B\u603B\u89C8\u7EA2\u5361\u91CD\u8BD5\uFF09`
       );
       await this.openDashboard();
     } finally {
