@@ -324,6 +324,7 @@ var FavDashboardView = class extends import_obsidian2.ItemView {
       }
       box.createDiv({ cls: "fav-syncgress-title", text: `\u540C\u6B65\u4E2D\uFF08${this.clock(sp.startedAt)} \u5F00\u59CB\uFF09` });
       box.createDiv({ cls: "fav-syncgress-line", text: parts.join(" \xB7 ") });
+      if (sp.step) box.createDiv({ cls: "fav-syncgress-step", text: `\u203A ${sp.step}` });
     } else if (sp.done.length > 0) {
       const okN = sp.done.filter((d) => d.ok).length;
       box.createDiv({
@@ -905,7 +906,7 @@ function appHeaders(accessToken, deviceId) {
   const sign = off >= 0 ? "+" : "-";
   const local = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}T${p(now.getHours())}:${p(now.getMinutes())}:${p(now.getSeconds())}.${p(now.getMilliseconds(), 3)}${sign}${p(Math.floor(Math.abs(off) / 60))}00`;
   const h = {
-    Host: "api.xiaoyuzhoufm.com",
+    // 注：不要手动设 Host，Obsidian requestUrl（Chromium）会直接 ERR_INVALID_ARGUMENT
     os: "android",
     "os-version": "28",
     manufacturer: "Xiaomi",
@@ -1124,6 +1125,27 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       }
     }
   }
+  /** 各平台抓取方式（一行 step 用，程序员友好，拒绝黑盒）。 */
+  fetchHow(p) {
+    switch (p) {
+      case "youtube":
+        return "yt-dlp \u626B WL/LL\uFF08flat\uFF0C\u9700 cookies\uFF09";
+      case "github":
+        return "gh api \u62C9 stars";
+      case "x":
+        return "GraphQL \u6293 bookmarks";
+      case "xiaoyuzhou":
+        return "POST \u6536\u542C\u5386\u53F2";
+      case "bilibili":
+        return "API \u62C9\u6536\u85CF\u5939+\u7A0D\u540E\u518D\u770B";
+      case "zhihu":
+        return "\u5B98\u65B9 API \u62C9\u516C\u5F00\u6536\u85CF\u5939";
+    }
+  }
+  setStep(text) {
+    this.syncProgress.step = text;
+    this.emitProgress();
+  }
   async onload() {
     this.settings = { ...DEFAULT_SETTINGS, ...await this.loadData() ?? {} };
     this.statusEl = this.addStatusBarItem();
@@ -1234,9 +1256,11 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
     try {
       new import_obsidian3.Notice(`\u540C\u6B65 ${platform} \u4E2D\u2026\uFF08\u603B\u89C8\u9875\u770B\u5B9E\u65F6\u8FDB\u5EA6\uFF09`);
       this.setStatus(`Fav: \u540C\u6B65 ${platform}\u2026`);
+      this.setStep(`\u6293 ${PLATFORM_LABEL[platform]}\uFF1A${this.fetchHow(platform)}\u2026`);
       const result = await syncPlatform(platform, this.runnerSettings(), this.runnerDeps());
       const { favIds, urls, favIdToPath, urlToPath } = await this.scanExisting();
-      const moved = await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]);
+      if (result.ok) this.setStep(`${PLATFORM_LABEL[platform]}\u6293\u5230 ${result.items.length} \u6761 \u2192 \u53BB\u91CD/\u5F52\u6863/\u843D\u76D8\u2026`);
+      const moved = result.ok ? await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]) : { moved: 0, movedPaths: [] };
       const report = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
       this.settings.lastSync[platform] = {
         at: (/* @__PURE__ */ new Date()).toISOString(),
@@ -1247,6 +1271,7 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       await this.saveSettings();
       this.syncProgress.running = false;
       this.syncProgress.current = void 0;
+      this.syncProgress.step = void 0;
       this.syncProgress.done = [{ platform, ok: result.ok, added: report.added, error: result.error }];
       this.syncProgress.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
       this.setStatus(result.ok ? `Fav: ${platform} +${report.added}` : `Fav: ${platform} \u5931\u8D25`);
@@ -1303,6 +1328,7 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
         idx += 1;
         this.syncProgress.current = p;
         this.setStatus(`Fav: \u540C\u6B65 ${p}\uFF08${idx}/${PLATFORMS.length}\uFF09\u2026`);
+        this.setStep(`[${idx}/${PLATFORMS.length}] \u6293 ${PLATFORM_LABEL[p]}\uFF1A${this.fetchHow(p)}\u2026`);
         this.emitProgress();
         let result;
         try {
@@ -1313,6 +1339,9 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
         let added = 0;
         if (result.ok) {
           try {
+            this.setStep(
+              p === "youtube" ? `${PLATFORM_LABEL[p]}\u6293\u5230 ${result.items.length} \u6761 \u2192 \u8865\u65E5\u671F+\u7B80\u4ECB\uFF08yt-dlp \u9010\u89C6\u9891\uFF0C\u6700\u6162\u7684\u4E00\u6B65\uFF09\u2026` : `${PLATFORM_LABEL[p]}\u6293\u5230 ${result.items.length} \u6761 \u2192 \u53BB\u91CD/\u5F52\u6863/\u843D\u76D8\u2026`
+            );
             const mv = await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]);
             totalMoved += mv.moved;
             const rep = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
@@ -1329,6 +1358,7 @@ var FavCollectorPlugin = class extends import_obsidian3.Plugin {
       }
       this.syncProgress.running = false;
       this.syncProgress.current = void 0;
+      this.syncProgress.step = void 0;
       this.syncProgress.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
       const failed = this.syncProgress.done.filter((d) => !d.ok).map((d) => d.platform);
       const okCount = this.syncProgress.done.length - failed.length;

@@ -8,7 +8,7 @@ import { FavDashboardView, VIEW_TYPE_FAV_DASHBOARD } from "./ui/dashboard.js";
 import { parseFrontmatter } from "./markdown/writer.js";
 import { syncPlatform, writeNewItems, relocateItems } from "./sync/runner.js";
 import { enrichYoutubeDates, enrichYoutubeDesc } from "./sync/youtube.js";
-import { PLATFORMS } from "./sync/model.js";
+import { PLATFORMS, PLATFORM_LABEL } from "./sync/model.js";
 import type { CollectedItem, HttpGet, Platform, PlatformResult } from "./sync/model.js";
 import type { XyzCreds } from "./sync/xiaoyuzhou.js";
 
@@ -22,6 +22,8 @@ export interface SyncPlatformProgress {
 export interface SyncProgress {
   running: boolean;
   current?: Platform;
+  /** 正在干嘛（一行，如"抓 YouTube（yt-dlp 扫 WL/LL）…"） */
+  step?: string;
   done: SyncPlatformProgress[];
   startedAt?: string;
   finishedAt?: string;
@@ -50,6 +52,29 @@ export default class FavCollectorPlugin extends Plugin {
         // 忽略订阅者异常
       }
     }
+  }
+
+  /** 各平台抓取方式（一行 step 用，程序员友好，拒绝黑盒）。 */
+  private fetchHow(p: Platform): string {
+    switch (p) {
+      case "youtube":
+        return "yt-dlp 扫 WL/LL（flat，需 cookies）";
+      case "github":
+        return "gh api 拉 stars";
+      case "x":
+        return "GraphQL 抓 bookmarks";
+      case "xiaoyuzhou":
+        return "POST 收听历史";
+      case "bilibili":
+        return "API 拉收藏夹+稍后再看";
+      case "zhihu":
+        return "官方 API 拉公开收藏夹";
+    }
+  }
+
+  private setStep(text: string): void {
+    this.syncProgress.step = text;
+    this.emitProgress();
   }
 
   async onload(): Promise<void> {
@@ -174,9 +199,13 @@ export default class FavCollectorPlugin extends Plugin {
     try {
       new Notice(`同步 ${platform} 中…（总览页看实时进度）`);
       this.setStatus(`Fav: 同步 ${platform}…`);
+      this.setStep(`抓 ${PLATFORM_LABEL[platform]}：${this.fetchHow(platform)}…`);
       const result = await syncPlatform(platform, this.runnerSettings(), this.runnerDeps());
       const { favIds, urls, favIdToPath, urlToPath } = await this.scanExisting();
-      const moved = await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]);
+      if (result.ok) this.setStep(`${PLATFORM_LABEL[platform]}抓到 ${result.items.length} 条 → 去重/归档/落盘…`);
+      const moved = result.ok
+        ? await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result])
+        : { moved: 0, movedPaths: [] as string[] };
       const report = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
       this.settings.lastSync[platform] = {
         at: new Date().toISOString(),
@@ -187,6 +216,7 @@ export default class FavCollectorPlugin extends Plugin {
       await this.saveSettings();
       this.syncProgress.running = false;
       this.syncProgress.current = undefined;
+      this.syncProgress.step = undefined;
       this.syncProgress.done = [{ platform, ok: result.ok, added: report.added, error: result.error }];
       this.syncProgress.finishedAt = new Date().toISOString();
       this.setStatus(result.ok ? `Fav: ${platform} +${report.added}` : `Fav: ${platform} 失败`);
@@ -248,6 +278,7 @@ export default class FavCollectorPlugin extends Plugin {
         idx += 1;
         this.syncProgress.current = p;
         this.setStatus(`Fav: 同步 ${p}（${idx}/${PLATFORMS.length}）…`);
+        this.setStep(`[${idx}/${PLATFORMS.length}] 抓 ${PLATFORM_LABEL[p]}：${this.fetchHow(p)}…`);
         this.emitProgress();
         let result: PlatformResult;
         try {
@@ -258,6 +289,11 @@ export default class FavCollectorPlugin extends Plugin {
         let added = 0;
         if (result.ok) {
           try {
+            this.setStep(
+              p === "youtube"
+                ? `${PLATFORM_LABEL[p]}抓到 ${result.items.length} 条 → 补日期+简介（yt-dlp 逐视频，最慢的一步）…`
+                : `${PLATFORM_LABEL[p]}抓到 ${result.items.length} 条 → 去重/归档/落盘…`,
+            );
             const mv = await relocateItems(this.fsAdapter(), favIdToPath, urlToPath, [result]);
             totalMoved += mv.moved;
             const rep = await writeNewItems(this.fsAdapter(), favIds, urls, [result], this.ytEnrich());
@@ -274,6 +310,7 @@ export default class FavCollectorPlugin extends Plugin {
       }
       this.syncProgress.running = false;
       this.syncProgress.current = undefined;
+      this.syncProgress.step = undefined;
       this.syncProgress.finishedAt = new Date().toISOString();
       const failed = this.syncProgress.done.filter((d) => !d.ok).map((d) => d.platform);
       const okCount = this.syncProgress.done.length - failed.length;

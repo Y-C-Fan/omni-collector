@@ -99,3 +99,15 @@ describe("xiaoyuzhou history", () => {
     await expect(collect({ post }, { accessToken: "  " })).rejects.toThrowError(/未登录/);
   });
 });
+
+
+describe("xiaoyuzhou headers", () => {
+  it("appHeaders is Chromium-safe (no manual Host)", async () => {
+    const { appHeaders } = await import("../src/sync/xiaoyuzhou.js");
+    const h = appHeaders("tok", "dev1");
+    expect("Host" in h).toBe(false);
+    expect(h["x-jike-access-token"]).toBe("tok");
+    expect(h["x-jike-device-id"]).toBe("dev1");
+    expect(h["local-time"]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+});

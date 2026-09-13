@@ -60,6 +60,7 @@ export class FavDashboardView extends ItemView {
       }
       box.createDiv({ cls: "fav-syncgress-title", text: `同步中（${this.clock(sp.startedAt)} 开始）` });
       box.createDiv({ cls: "fav-syncgress-line", text: parts.join(" · ") });
+      if (sp.step) box.createDiv({ cls: "fav-syncgress-step", text: `› ${sp.step}` });
     } else if (sp.done.length > 0) {
       const okN = sp.done.filter((d) => d.ok).length;
       box.createDiv({

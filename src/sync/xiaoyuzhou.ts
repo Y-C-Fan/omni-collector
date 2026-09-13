@@ -27,14 +27,14 @@ export interface XyzHttp {
   ): Promise<{ data: unknown; headers: Record<string, string>; status: number }>;
 }
 
-function appHeaders(accessToken?: string, deviceId?: string): Record<string, string> {
+export function appHeaders(accessToken?: string, deviceId?: string): Record<string, string> {
   const now = new Date();
   const p = (n: number, l = 2) => String(n).padStart(l, "0");
   const off = -now.getTimezoneOffset();
   const sign = off >= 0 ? "+" : "-";
   const local = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}T${p(now.getHours())}:${p(now.getMinutes())}:${p(now.getSeconds())}.${p(now.getMilliseconds(), 3)}${sign}${p(Math.floor(Math.abs(off) / 60))}00`;
   const h: Record<string, string> = {
-    Host: "api.xiaoyuzhoufm.com",
+    // 注：不要手动设 Host，Obsidian requestUrl（Chromium）会直接 ERR_INVALID_ARGUMENT
     os: "android",
     "os-version": "28",
     manufacturer: "Xiaomi",
